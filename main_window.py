@@ -31,7 +31,7 @@ class ModelJob:
     mdx_path: str = ""; model_name: str = ""; status: str = "queued"; progress: int = 0
     warnings: list = field(default_factory=list); errors: list = field(default_factory=list)
     output_path: str = ""; report_html: str = ""; preview_path: str = ""
-    scale: float = 0.05; particle_rate: float = 1.0
+    scale: float = 0.05; particle_rate: float = 1.0; mdx_data = None
     texture_count: int = 0; animation_count: int = 0; start_time: float = 0.0
     def to_dict(self): return {"mdx_path":self.mdx_path,"model_name":self.model_name,"scale":self.scale,"particle_rate":self.particle_rate}
     @staticmethod
@@ -198,7 +198,7 @@ class MainWindow(QMainWindow):
         if p in self.jobs: return
         n=os.path.splitext(os.path.basename(p))[0]; j=ModelJob(mdx_path=p,model_name=n,scale=self._scale,particle_rate=self._prate)
         try:
-            m=mdxlib.parse(p); j.texture_count=len(m.get("textures",[])); j.animation_count=len(m.get("sequences",[]))
+            j.mdx_data=mdxlib.parse(p); j.texture_count=len(j.mdx_data.get("textures",[])); j.animation_count=len(m.get("sequences",[]))
         except: pass
         self.jobs[p]=j; self._add_item(j)
         if not silent: self._log("INFO","Added: "+n)
@@ -240,7 +240,7 @@ class MainWindow(QMainWindow):
         q=[j for j in self.jobs.values() if j.status=="queued"]
         if not q: self._done(); return
         j=q[0]; j.start_time=time.time(); self._log("INFO",">> "+j.model_name)
-        try: md=mdxlib.parse(j.mdx_path)
+        try: md=j.mdx_data or mdxlib.parse(j.mdx_path)
         except Exception as e: self._log("ERROR",str(e)); j.status="failed"; self._upd(j); self._next(); return
         if self._auto_scale: s,c=discovery.estimate_scale(md); j.scale=s; self._log("INFO",f"Scale: {s} ({c})")
         od=self._od or os.path.join(os.path.dirname(j.mdx_path),"out"); os.makedirs(od,exist_ok=True)

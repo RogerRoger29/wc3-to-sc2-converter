@@ -12,9 +12,9 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QTreeWidget, QTreeWidgetItem, QPushButton, QLabel,
     QPlainTextEdit, QProgressBar, QFileDialog, QCheckBox, QLineEdit,
-    QGroupBox, QSplitter, QHeaderView, QStyleFactory, QScrollArea, QComboBox, QMenu, QFrame, QGraphicsOpacityEffect,
+    QGroupBox, QSplitter, QHeaderView, QStyleFactory, QScrollArea, QComboBox, QMenu, QFrame,
 )
-from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer, QSettings, QPropertyAnimation, QEasingCurve, QSize
+from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer, QSettings
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor, QPixmap, QPalette, QKeySequence, QShortcut
 
 import mdx as mdxlib, diagnostics, healer, discovery, fuzzy_anims, actor_gen, preview
@@ -123,8 +123,9 @@ class SettingsBuilder(QObject):
 class MainWindow(QMainWindow):
     def __init__(self,auto_files=None):
         super().__init__(); self.setWindowTitle("WC3 to SC2 Converter"); self.resize(1280,850); self.setMinimumSize(960,620)
-        self.jobs:Dict[str,ModelJob]={}; self.settings=QSettings("wc3toSC2","Converter"); self.worker=None; self.worker_thread=None
-        self._settings_widget=None; self._settings_loading=False; self._settings_inserted=False; self._pulse_timer=None
+        self.jobs:Dict[str,ModelJob]={}; self._items:Dict[str,QTreeWidgetItem]={}
+        self.settings=QSettings("wc3toSC2","Converter"); self.worker=None; self.worker_thread=None
+        self._settings_widget=None; self._settings_loading=False; self._settings_inserted=False
         self._load_all_settings(); self._setup_theme(); self._setup_ui(); self._start_settings_cache()
         self._restore_session(); self._check_updates()
         if auto_files:
@@ -157,10 +158,11 @@ class MainWindow(QMainWindow):
         self._sb=SettingsBuilder(self); self._sb_thread=QThread()
         self._sb.moveToThread(self._sb_thread); self._sb.ready.connect(self._on_settings_ready)
         self._sb_thread.started.connect(self._sb.build)
+        self._sb_thread.finished.connect(self._sb_thread.deleteLater)
         self._sb_thread.start()
 
     def _on_settings_ready(self,w):
-        self._settings_widget=w; self._settings_loading=False
+        self._settings_widget=w; self._settings_loading=False; self._sb_thread.quit()
         if self.tabs.currentIndex()==1 and not self._settings_inserted:
             self.tabs.widget(1).deleteLater()
             self.tabs.insertTab(1,w,"Settings"); self.tabs.setCurrentIndex(1)
@@ -294,23 +296,14 @@ class MainWindow(QMainWindow):
         self._log("INFO",f"Found {c} model(s) in folder")
 
     def _add_item(self,j):
-        it=QTreeWidgetItem(self.queue_tree); it.setText(0,j.model_name); it.setText(1,"Ready"); it.setText(2,u"\u2014"); it.setText(3,u"\u2014"); it.setData(0,Qt.UserRole,j.mdx_path)
+        it=QTreeWidgetItem(self.queue_tree); it.setText(0,j.model_name); it.setText(1,"Ready"); it.setText(2,u"\u2014"); it.setText(3,u"\u2014")
+        it.setData(0,Qt.UserRole,j.mdx_path); self._items[j.mdx_path]=it
 
     def _find_item(self,p):
-        for i in range(self.queue_tree.topLevelItemCount()):
-            it=self.queue_tree.topLevelItem(i)
-            if it.data(0,Qt.UserRole)==p: return it
-        return None
+        return self._items.get(p)
 
     def _vis(self):
         h=self.queue_tree.topLevelItemCount()>0; self.welcome.setVisible(not h); self.queue_tree.setVisible(h)
-        if h and not self._pulse_timer:
-            self._pulse_timer=QTimer(self); self._pulse_timer.timeout.connect(self._pulse_convert_btn); self._pulse_timer.start(2000)
-
-    def _pulse_convert_btn(self):
-        if not any(j.status=="ready" for j in self.jobs.values()): return
-        self.cvt_btn.setStyleSheet(self.cvt_btn.styleSheet().replace("padding:8px 28px","padding:8px 32px"))
-        QTimer.singleShot(300,lambda: self.cvt_btn.setStyleSheet(self.cvt_btn.styleSheet().replace("padding:8px 32px","padding:8px 28px")))
 
     def _update_title(self):
         q=sum(1 for j in self.jobs.values() if j.status=="ready"); d=sum(1 for j in self.jobs.values() if j.status=="done")
@@ -334,7 +327,7 @@ class MainWindow(QMainWindow):
         for it in self.queue_tree.selectedItems():
             p=it.data(0,Qt.UserRole)
             if p in self.jobs:
-                self.jobs.pop(p,None); self.queue_tree.takeTopLevelItem(self.queue_tree.indexOfTopLevelItem(it)); removed+=1
+                self.jobs.pop(p,None); self._items.pop(p,None); self.queue_tree.takeTopLevelItem(self.queue_tree.indexOfTopLevelItem(it)); removed+=1
         if removed: self._log("INFO",f"Removed {removed} model(s)"); self._vis(); self._save_session(); self._update_title()
 
     def _context_menu(self,pos):
@@ -346,19 +339,18 @@ class MainWindow(QMainWindow):
         if j.status=="ready": menu.addAction("Remove from queue").triggered.connect(lambda: self._remove_one(p))
         if j.status=="done" and j.output_path and os.path.exists(j.output_path):
             menu.addAction("Open output folder").triggered.connect(lambda: os.startfile(os.path.dirname(j.output_path)))
-            menu.addAction("Open report").triggered.connect(lambda: os.startfile(os.path.join(os.path.dirname(j.output_path),j.model_name+"_report.html")) if os.path.exists(os.path.join(os.path.dirname(j.output_path),j.model_name+"_report.html")) else None)
         menu.exec(self.queue_tree.viewport().mapToGlobal(pos))
 
     def _remove_one(self,p):
         if p in self.jobs:
-            self.jobs.pop(p,None); it=self._find_item(p)
+            self.jobs.pop(p,None); it=self._items.pop(p,None)
             if it: self.queue_tree.takeTopLevelItem(self.queue_tree.indexOfTopLevelItem(it))
             self._vis(); self._save_session(); self._update_title()
 
     def _clear_done(self):
         for i in range(self.queue_tree.topLevelItemCount()-1,-1,-1):
             it=self.queue_tree.topLevelItem(i); p=it.data(0,Qt.UserRole)
-            if p in self.jobs and self.jobs[p].status in ("done","failed"): self.jobs.pop(p,None); self.queue_tree.takeTopLevelItem(i)
+            if p in self.jobs and self.jobs[p].status in ("done","failed"): self.jobs.pop(p,None); self._items.pop(p,None); self.queue_tree.takeTopLevelItem(i)
         self._vis(); self._update_title()
 
     def _start(self):

@@ -446,14 +446,15 @@ def build_animations():
     pbs = list(arm.pose.bones)
     seq_actions = {}
     used_names = {}
+    seq_fps = _estimate_seq_fps(m)
     for seq in m["sequences"]:
         s_ms, e_ms = seq["start"], seq["end"]
-        nframes = max(1, round((e_ms - s_ms) / 1000.0 * FPS))
+        nframes = max(1, round((e_ms - s_ms) / 1000.0 * fps))
         act = bpy.data.actions.new("%s_%s" % (NAME, seq["name"]))
         data = {pb.name: ([[] for _ in range(3)], [[] for _ in range(4)], [[] for _ in range(3)]) for pb in pbs}
         prev_q = {}
         for jf in range(nframes + 1):
-            t = s_ms + jf * (1000.0 / FPS)
+            t = s_ms + jf * (1000.0 / fps)
             for pb in pbs:
                 node = node_by_bonename[pb.name]; oid = node["objectId"]
                 Mb = rest_inv[oid] @ node_local_matrix(node, t) @ rest_world[oid]
@@ -673,6 +674,7 @@ def bake_property_animations():
     mat_geoset = {}
     for gi, mi in geoset_mat.items():
         mat_geoset.setdefault(mi, gi)
+    seq_fps = _estimate_seq_fps(m)
     for seq in m["sequences"]:
         if seq["name"] not in seq_actions:
             continue
@@ -688,8 +690,8 @@ def bake_property_animations():
             ga = geoa.get(mat_geoset.get(matid))
             if not kmta and not ga:
                 continue
-            vals = [clamp01(sample_scalar(kmta, s_ms + jf * (1000.0 / FPS), 1.0)
-                            * sample_scalar(ga, s_ms + jf * (1000.0 / FPS), 1.0)) for jf in frames]
+            vals = [clamp01(sample_scalar(kmta, s_ms + jf * (1000.0 / fps), 1.0)
+                            * sample_scalar(ga, s_ms + jf * (1000.0 / fps), 1.0)) for jf in frames]
             if min(vals) < 0.999:
                 diff.color_value_header.interpolation = "LINEAR"
                 path = diff.path_from_id("color_value")
@@ -706,7 +708,7 @@ def bake_property_animations():
             diff = _by_handle(arm.m3_materiallayers, diff_handle)
             if not diff:
                 continue
-            r_vals = [clamp01(sample_vec(gc, s_ms + jf * (1000.0 / FPS), (1, 1, 1))) for jf in frames]
+            r_vals = [clamp01(sample_vec(gc, s_ms + jf * (1000.0 / fps), (1, 1, 1))) for jf in frames]
             if any(abs(v[0] - 1.0) > 0.001 or abs(v[1] - 1.0) > 0.001 or abs(v[2] - 1.0) > 0.001 for v in r_vals):
                 diff.color_value_header.interpolation = "LINEAR"
                 path = diff.path_from_id("color_value")
@@ -725,7 +727,7 @@ def bake_property_animations():
             if not ps or not hasattr(ps, "emit_rate"):
                 continue
             base = max(float(e.get("emissionRate", 0.0)) * PARTICLE_RATE_SCALE, 0.0)
-            vals = [base * clamp01(sample_scalar(kp2v, s_ms + jf * (1000.0 / FPS), 1.0)) for jf in frames]
+            vals = [base * clamp01(sample_scalar(kp2v, s_ms + jf * (1000.0 / fps), 1.0)) for jf in frames]
             if max(vals) - min(vals) > 1e-4:
                 ps.emit_rate_header.interpolation = "LINEAR"
                 path = ps.path_from_id("emit_rate")

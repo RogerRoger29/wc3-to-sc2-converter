@@ -107,52 +107,73 @@ PE2_FILTER = {0: "blend", 1: "additive", 2: "modulate", 3: "modulate2x", 4: "alp
 PE2_HEADTAIL = {0: "head", 1: "tail", 2: "both"}
 
 def parse_pre2(data, off, size):
-    """ParticleEmitter2 (WC3 v800). Empirically-confirmed fixed layout (this model's emitters have no
-    KG node tracks; static block ends with KP2V at rel-off 271). Offsets relative to emitter start:
-      96  speed,variation,latitude,gravity,lifeSpan,emissionRate,width,length (8 f32)
-      128 filterMode,rows,columns,headOrTail (4 u32)
-      144 tailLength,timeMid (2 f32)
-      152 3 colors (9 f32)
-      188 segmentAlphas (3 u8)
-      191 4-byte field (v800 quirk; skipped)
-      195 segmentScaling (3 f32)
-      207 4x3 u32 UV-anim intervals
-      255 textureId, squirt, priorityPlane, replaceableId (i32/u32)
+    """ParticleEmitter2 (WC3 v800).
+
+    Layout per emitter:
+      [u32 size][char[80] name][u32 oid][u32 pid][u32 flags]
+      then optional KGTR/KGRT/KGSC animation tracks (variable-length)
+      then fixed PRE2 fields (172 bytes: speeds, filter, colors, alphas, scaling, UV intervals, texId, etc.)
+      then optional KP2V emission-visibility track at the tail.
+
+    When no KG tracks are present the fixed fields start at rel-offset 96 (matching the original
+    empirically-confirmed layout). When KG tracks ARE present the fixed-base shifts forward by the
+    total byte-length of the tracks, so we compute it dynamically.
     """
     end = off + size
     p = off
     emitters = []
 
-    def f(o):
-        return round(struct.unpack_from("<f", data, p + o)[0], 6)
-
-    def u(o):
-        return struct.unpack_from("<I", data, p + o)[0]
-
-    def i(o):
-        return struct.unpack_from("<i", data, p + o)[0]
-
     while p < end:
-        esize = u(0)
+        esize = struct.unpack_from("<I", data, p)[0]
         name = data[p + 4:p + 84].split(b"\x00")[0].decode("ascii", "replace")
-        oid = u(84); pid = u(88); flags = u(92)
-        filterMode = u(128)
-        fm = PE2_FILTER.get(filterMode, "additive")  # unreliable in v800; default additive for glow
+        oid = struct.unpack_from("<I", data, p + 84)[0]
+        pid = struct.unpack_from("<I", data, p + 88)[0]
+        flags = struct.unpack_from("<I", data, p + 92)[0]
+
+        # --- scan for optional KG** animation tracks (KGTR/KGRT/KGSC) ---
+        r = Reader(data, p + 96)
+        tracks = {}
+        while r.p < p + esize:
+            t = r.peek_tag()
+            if t == "KGTR":
+                tracks["translation"] = read_track(r, ("KGTR",), lambda rr: rr.vec(3))
+            elif t == "KGRT":
+                tracks["rotation"] = read_track(r, ("KGRT",), lambda rr: rr.vec(4))
+            elif t == "KGSC":
+                tracks["scale"] = read_track(r, ("KGSC",), lambda rr: rr.vec(3))
+            else:
+                break
+        base = r.p - p  # dynamic offset where fixed PRE2 fields begin
+
+        # Helper readers relative to the emitter start (p)
+        def f(o):
+            return round(struct.unpack_from("<f", data, p + base + o)[0], 6)
+
+        def u(o):
+            return struct.unpack_from("<I", data, p + base + o)[0]
+
+        def i(o):
+            return struct.unpack_from("<i", data, p + base + o)[0]
+
+        filterMode = u(32)
+        fm = PE2_FILTER.get(filterMode, "additive")
         em = {
-            "name": name, "objectId": oid, "parentId": (None if pid == 0xFFFFFFFF else pid), "flags": flags,
-            "speed": f(96), "variation": f(100), "latitude": f(104), "gravity": f(108),
-            "lifespan": f(112), "emissionRate": f(116), "width": f(120), "length": f(124),
-            "filterMode": fm, "filterModeRaw": filterMode, "rows": u(132), "columns": u(136),
-            "headOrTail": PE2_HEADTAIL.get(u(140), u(140)), "tailLength": f(144), "timeMid": f(148),
-            "colors": [[f(152), f(156), f(160)], [f(164), f(168), f(172)], [f(176), f(180), f(184)]],
-            "alphas": [data[p + 188], data[p + 189], data[p + 190]],
-            "scaling": [f(195), f(199), f(203)],
-            "textureId": i(255), "squirt": u(259), "priorityPlane": i(263), "replaceableId": u(267),
+            "name": name, "objectId": oid, "parentId": (None if pid == 0xFFFFFFFF else pid),
+            "flags": flags, "tracks": tracks,
+            "speed": f(0), "variation": f(4), "latitude": f(8), "gravity": f(12),
+            "lifespan": f(16), "emissionRate": f(20), "width": f(24), "length": f(28),
+            "filterMode": fm, "filterModeRaw": filterMode, "rows": u(36), "columns": u(40),
+            "headOrTail": PE2_HEADTAIL.get(u(44), u(44)), "tailLength": f(48), "timeMid": f(52),
+            "colors": [[f(56), f(60), f(64)], [f(68), f(72), f(76)], [f(80), f(84), f(88)]],
+            "alphas": [data[p + base + 92], data[p + base + 93], data[p + base + 94]],
+            "scaling": [f(99), f(103), f(107)],
+            "textureId": i(159), "squirt": u(163), "priorityPlane": i(167), "replaceableId": u(171),
         }
-        # KP2V emission-rate visibility track at rel-off 271 (gates which sequences emit)
+        # KP2V emission-rate visibility track sits right after the 172-byte fixed block
         em["emission"] = None
-        if data[p + 271:p + 275] == b"KP2V":
-            r2 = Reader(data, p + 271)
+        kp2v_off = p + base + 175
+        if kp2v_off + 4 <= p + esize and data[kp2v_off:kp2v_off + 4] == b"KP2V":
+            r2 = Reader(data, kp2v_off)
             em["emission"] = read_track(r2, ("KP2V",), lambda rr: rr.f32())
         emitters.append(em)
         p += esize
@@ -352,15 +373,28 @@ def parse(path):
     read_node_chunk("BONE", out["bones"], extra_after=2)
     # HELP: node only
     read_node_chunk("HELP", out["helpers"])
-    # EVTS: node + KEVT(track of event times) - read_node stops at unknown tag; handle remainder
+    # EVTS: event objects with optional KEVT time tracks
+    if "EVTS" in chunks:
+        cr, end = chunk_reader("EVTS")
+        while cr.p < end:
+            node = read_node(cr)
+            # KEVT track follows the node: a keyframe track of event fire times
+            if cr.peek_tag() == "KEVT":
+                node["tracks"]["eventTime"] = read_track(cr, ("KEVT",), lambda rr: rr.i32())
+            out["events"].append(node)
+            out["nodes"][node["objectId"]] = node
+
+    # ATCH: attachment points — node + path[260] + attachmentId + optional KATV visibility
     if "ATCH" in chunks:
         cr, end = chunk_reader("ATCH")
         while cr.p < end:
             astart = cr.p
-            # ATCH entry: node, then path char[260], then attachmentId u32, then optional KATV visibility
             node = read_node(cr)
-            # after node, attachment has: path(260) + attachmentId(4) -- but node consumed to its 'size';
-            # ATCH inclusive size is the node size? In v800 ATCH entries: the node 'size' covers the whole entry.
+            # After the generic node: 260-char path, u32 attachmentId, optional KATV visibility track
+            node["path"] = cr.cstr(260)
+            node["attachmentId"] = cr.u32()
+            if cr.peek_tag() == "KATV":
+                node["tracks"]["visibility"] = read_track(cr, ("KATV",), lambda rr: rr.f32())
             out["attachments"].append(node)
             out["nodes"][node["objectId"]] = node
             if cr.p <= astart:

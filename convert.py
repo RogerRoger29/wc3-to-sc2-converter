@@ -3,6 +3,8 @@
 Usage:
     python convert.py <model.json>                 # config-driven (recommended; see config.example.json)
     python convert.py <model.mdx> <out_dir>        # quick mode, everything auto-detected
+    python convert.py <model.json> --verbose       # detailed debug output
+    python convert.py <model.json> --quiet         # only errors and final result
 
 What it does (in system Python — needs numpy + Pillow):
   1. parse the MDX
@@ -13,30 +15,63 @@ What it does (in system Python — needs numpy + Pillow):
 
 Blender 4.4 with the m3studio addon installed is required for step 4 (see README).
 """
-import os, sys, json, subprocess, glob
+import os, sys, json, subprocess, glob, logging, argparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import mdx as mdxlib
 import textures as tex
 
+log = logging.getLogger("wc3toSC2")
+
+
+def setup_logging(level):
+    """Configure the root logger with a clean format."""
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(levelname)-7s %(message)s"))
+    log.addHandler(handler)
+    log.setLevel(level)
+    # suppress noisy library loggers
+    logging.getLogger("PIL").setLevel(logging.WARNING)
+
 
 def find_blender(cfg):
+    """Locate blender.exe from config, standard install paths, or PATH."""
     if cfg.get("blender") and os.path.exists(cfg["blender"]):
+        log.debug("Using Blender from config: %s", cfg["blender"])
         return cfg["blender"]
+
     cands = []
-    for base in (r"C:\Program Files\Blender Foundation", r"C:\Program Files (x86)\Blender Foundation"):
-        cands += sorted(glob.glob(os.path.join(base, "Blender *", "blender.exe")), reverse=True)
-    cands += ["blender"]  # PATH fallback (Linux/macOS)
+    if sys.platform == "win32":
+        for base in (r"C:\Program Files\Blender Foundation", r"C:\Program Files (x86)\Blender Foundation"):
+            cands += sorted(glob.glob(os.path.join(base, "Blender *", "blender.exe")), reverse=True)
+    elif sys.platform == "darwin":
+        cands += sorted(glob.glob("/Applications/Blender*.app/Contents/MacOS/Blender"), reverse=True)
+    else:
+        # Linux: check common install locations
+        cands += sorted(glob.glob("/usr/local/bin/blender*"), reverse=True)
+        cands += sorted(glob.glob("/usr/bin/blender*"), reverse=True)
+        cands += sorted(glob.glob(os.path.expanduser("~/blender*/blender")), reverse=True)
+
+    cands += ["blender"]  # PATH fallback (all platforms)
+
     for c in cands:
         if c == "blender" or os.path.exists(c):
+            log.debug("Auto-detected Blender: %s", c)
             return c
-    raise SystemExit("Blender not found — set \"blender\" in the config to your blender.exe path.")
+
+    log.critical("Blender not found.")
+    log.critical("  • Set \"blender\" in your config JSON to the full path of blender.exe")
+    log.critical("  • On Windows this is usually: C:\\Program Files\\Blender Foundation\\Blender 4.4\\blender.exe")
+    log.critical("  • On macOS: /Applications/Blender.app/Contents/MacOS/Blender")
+    log.critical("  • On Linux: /usr/bin/blender")
+    raise SystemExit(1)
 
 
 def resolve_texture_src(texs_path, search_dirs, override):
     """Find the BLP/image on disk for a WC3 TEXS path, trying an explicit override then search dirs."""
     if override and os.path.exists(override):
+        log.debug("  texture override found: %s", override)
         return override
     base = os.path.basename(texs_path.replace("\\", "/"))
     cands = []
@@ -45,23 +80,54 @@ def resolve_texture_src(texs_path, search_dirs, override):
         cands.append(os.path.join(d, texs_path.replace("\\", os.sep)))  # by full relative path
     for c in cands:
         if os.path.exists(c):
+            log.debug("  resolved %s -> %s", texs_path, c)
             return c
     return None
 
 
 def main():
-    arg = sys.argv[1]
+    # ---- argparse with --verbose / --quiet ----
+    parser = argparse.ArgumentParser(
+        description="WC3 .mdx -> SC2 .m3 model converter",
+        usage="%(prog)s <model.json|model.mdx> [out_dir] [--verbose|--quiet]")
+    parser.add_argument("input", help="Path to a .json config file or a .mdx model file")
+    parser.add_argument("out_dir", nargs="?", default=None,
+                        help="Output directory (only used in quick .mdx mode)")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Detailed debug output")
+    parser.add_argument("--quiet", "-q", action="store_true", help="Only errors and final result")
+    args = parser.parse_args()
+
+    if args.verbose:
+        setup_logging(logging.DEBUG)
+    elif args.quiet:
+        setup_logging(logging.WARNING)
+    else:
+        setup_logging(logging.INFO)
+
+    # ---- load config ----
+    arg = args.input
     if arg.lower().endswith(".json"):
-        cfg = json.load(open(arg, "r", encoding="utf-8"))
+        try:
+            cfg = json.load(open(arg, "r", encoding="utf-8"))
+        except (json.JSONDecodeError, FileNotFoundError) as e:
+            log.critical("Failed to load config '%s': %s", arg, e)
+            raise SystemExit(1)
         cfg_dir = os.path.dirname(os.path.abspath(arg))
     else:
-        cfg = {"mdx": arg, "out_dir": sys.argv[2] if len(sys.argv) > 2 else "Converted"}
+        if not os.path.exists(arg):
+            log.critical("MDX file not found: %s", arg)
+            raise SystemExit(1)
+        cfg = {"mdx": arg, "out_dir": args.out_dir or "Converted"}
         cfg_dir = os.getcwd()
 
     def rel(p):
         return p if os.path.isabs(p) else os.path.normpath(os.path.join(cfg_dir, p))
 
     mdx_path = rel(cfg["mdx"])
+    if not os.path.exists(mdx_path):
+        log.critical("MDX file not found: %s", mdx_path)
+        raise SystemExit(1)
+
     out_dir = rel(cfg.get("out_dir", "Converted"))
     os.makedirs(out_dir, exist_ok=True)
     name = cfg.get("model_name") or os.path.splitext(os.path.basename(mdx_path))[0]
@@ -69,9 +135,17 @@ def main():
     search_dirs = [rel(d) for d in cfg.get("texture_search_dirs", [".", "Textures", os.path.dirname(cfg["mdx"]) or "."])]
     tex_cfg = cfg.get("textures", {})
 
-    m = mdxlib.parse(mdx_path)
-    print("=== %s: %d textures, %d materials, %d geosets, %d sequences, %d emitters ===" % (
-        name, len(m["textures"]), len(m["materials"]), len(m["geosets"]), len(m["sequences"]), len(m["particles"])))
+    # ---- parse MDX ----
+    log.info("Parsing %s ...", os.path.basename(mdx_path))
+    try:
+        m = mdxlib.parse(mdx_path)
+    except Exception as e:
+        log.critical("Failed to parse MDX '%s': %s", mdx_path, e)
+        raise SystemExit(1)
+
+    log.info("=== %s: %d textures, %d materials, %d geosets, %d sequences, %d emitters ===",
+             name, len(m["textures"]), len(m["materials"]), len(m["geosets"]),
+             len(m["sequences"]), len(m["particles"]))
 
     particle_texids = {e["textureId"] for e in m["particles"]}
 
@@ -80,7 +154,7 @@ def main():
     missing = []
     for i, t in enumerate(m["textures"]):
         if t["replaceableId"] in (1, 2):
-            print("  tex[%d] replaceable team texture - no file, handled as team-colour emissive" % i)
+            log.info("  tex[%d] replaceable team texture — handled as team-colour emissive (no file needed)", i)
             continue
         if not t["path"]:
             continue
@@ -89,18 +163,24 @@ def main():
         out_name = ov.get("out") or (os.path.splitext(os.path.basename(t["path"].replace("\\", "/")))[0] + ".dds")
         if not src:
             missing.append((i, t["path"]))
-            print("  tex[%d] %-28s MISSING (searched %s) — will reference %s but you must supply it" % (
-                i, t["path"], search_dirs, out_name))
+            log.warning("  tex[%d] %-28s MISSING (searched %d dirs) — will reference %s but you must supply it",
+                        i, t["path"], len(search_dirs), out_name)
             tex_map[i] = out_name
             continue
-        glow = ov.get("glow", i in particle_texids)            # particle textures default to glow treatment
+        glow = ov.get("glow", i in particle_texids)
         alpha_invert = ov.get("alpha_invert", False)
-        size, mips = tex.convert_texture(src, os.path.join(out_dir, out_name),
-                                         alpha_invert=alpha_invert, glow=glow)
+        try:
+            size, mips = tex.convert_texture(src, os.path.join(out_dir, out_name),
+                                             alpha_invert=alpha_invert, glow=glow)
+        except Exception as e:
+            log.error("  tex[%d] %s — conversion FAILED: %s", i, os.path.basename(src), e)
+            missing.append((i, t["path"]))
+            tex_map[i] = out_name
+            continue
         tex_map[i] = out_name
-        print("  tex[%d] %-28s -> %-22s %s mips=%d%s%s" % (
-            i, os.path.basename(src), out_name, size, mips,
-            " [glow]" if glow else "", " [alpha-invert]" if alpha_invert else ""))
+        log.info("  tex[%d] %-28s -> %-22s %s mips=%d%s%s",
+                 i, os.path.basename(src), out_name, size, mips,
+                 " [glow]" if glow else "", " [alpha-invert]" if alpha_invert else "")
 
     # ---- write build config for Blender ----
     build_cfg = {
@@ -108,33 +188,49 @@ def main():
         "model_name": name, "scale": float(cfg.get("scale", 1.0)),
         "asset_texture_dir": asset_dir, "textures": {str(k): v for k, v in tex_map.items()},
         "anim_names": cfg.get("anim_names", {}), "attachments": cfg.get("attachments"),
-        "features": cfg.get("features", {}), "particle_rate_scale": float(cfg.get("particle_rate_scale", 1.0)),
+        "features": cfg.get("features", {}),
+        "particle_rate_scale": float(cfg.get("particle_rate_scale", 1.0)),
+        "particle_size_scale": float(cfg.get("particle_size_scale", 1.0)),
         "team_color": bool(cfg.get("team_color", True)),
     }
     build_cfg_path = os.path.join(out_dir, "_build_config.json")
     json.dump(build_cfg, open(build_cfg_path, "w", encoding="utf-8"), indent=1)
+    log.debug("Build config written to %s", build_cfg_path)
 
     # ---- run Blender ----
     blender = find_blender(cfg)
     cmd = [blender, "--background", "--factory-startup", "--python", os.path.join(HERE, "build_m3.py"),
            "--", build_cfg_path]
-    print("\n=== launching Blender ===\n ", " ".join('"%s"' % c if " " in c else c for c in cmd))
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    log.info("Launching Blender ...")
+    log.debug("  %s", " ".join('"%s"' % c if " " in c else c for c in cmd))
+
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        log.critical("Blender timed out after 5 minutes — the conversion may be stuck or the model is too complex.")
+        raise SystemExit(1)
+    except FileNotFoundError:
+        log.critical("Blender executable not found at '%s'. Check your config or Blender installation.", blender)
+        raise SystemExit(1)
+
+    # Filter key output lines from Blender
     tail = [ln for ln in proc.stdout.splitlines()
             if any(k in ln for k in ("anim '", "mat[", "particle[", "attachment", "hit-test", "bounds",
-                                     "baked", "EXPORT_OK", "EXPORT_FAILED", "BUILD_DONE", "warn", "Error"))]
-    print("\n".join("  " + t for t in tail))
-    if "EXPORT_FAILED" in proc.stdout or proc.returncode not in (0,):
-        print("\n!!! build problem — full Blender stderr below:\n", proc.stderr[-2000:])
-        sys.exit(1)
-    print("\nDONE. Output: %s" % build_cfg["out"])
-    print("Textures: %s\\%s*.dds  (import into SC2 under %s)" % (out_dir, "", asset_dir))
+                                     "baked", "EXPORT_OK", "EXPORT_FAILED", "BUILD_DONE",
+                                     "warn", "Error", "ERROR", "CRITICAL"))]
+    for t in tail:
+        log.info("  %s", t)
+
+    if "EXPORT_FAILED" in proc.stdout or proc.returncode != 0:
+        log.critical("Build FAILED — Blender stderr (last 2000 chars):\n%s", proc.stderr[-2000:])
+        raise SystemExit(1)
+
+    log.info("DONE.  Output: %s", build_cfg["out"])
+    log.info("Textures: %s%s*.dds  (import into SC2 under %s)", out_dir, os.sep, asset_dir)
     if missing:
-        print("NOTE: %d texture(s) were not found on disk and must be supplied: %s" % (
-            len(missing), ", ".join(p for _, p in missing)))
+        log.warning("%d texture(s) were not found on disk and must be supplied manually: %s",
+                    len(missing), ", ".join(p for _, p in missing))
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(__doc__); sys.exit(1)
     main()

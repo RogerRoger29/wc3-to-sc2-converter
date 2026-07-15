@@ -67,12 +67,42 @@ def clamp01(x):
     return min(max(x, 0.0), 1.0)
 
 # ---------------------------------------------------------------- bootstrap m3studio
+# --- Blender version guard ---
+blender_ver = bpy.app.version
+if blender_ver < (4, 4, 0):
+    raise SystemExit(
+        "Blender %d.%d.%d is too old.  This tool requires Blender >= 4.4.0 "
+        "(the m3studio addon and M3 timeline hardcode 30 fps on 4.4)."
+        % blender_ver)
+print("Blender %d.%d.%d — version ok" % blender_ver)
+
+# --- m3studio addon validation ---
 gpu.shader.from_builtin = lambda *a, **k: None
 bpy.types.SpaceView3D.draw_handler_add = staticmethod(lambda *a, **k: None)
-addon_utils.enable("m3studio-main", default_set=False, persistent=False)
-shared = importlib.import_module("m3studio-main.shared")
-io_m3_export = importlib.import_module("m3studio-main.io_m3_export")
-print("m3studio enabled; props ok:", hasattr(bpy.types.Object, "m3_materialrefs"))
+
+m3studio_ok = addon_utils.enable("m3studio-main", default_set=False, persistent=False)
+if m3studio_ok is None:
+    raise SystemExit(
+        "The m3studio addon was not found in Blender.\n"
+        "  1. Download it from https://github.com/Solstice245/m3studio\n"
+        "  2. In Blender: Edit > Preferences > Add-ons > Install… > pick the downloaded zip\n"
+        "  3. Tick the checkbox to enable it, then quit Blender.\n"
+        "  4. The addon folder must be named 'm3studio-main' (the GitHub zip default).")
+
+try:
+    shared = importlib.import_module("m3studio-main.shared")
+    io_m3_export = importlib.import_module("m3studio-main.io_m3_export")
+except ImportError as e:
+    raise SystemExit(
+        "Failed to import m3studio modules: %s\n"
+        "Make sure the m3studio addon is installed and its folder is named 'm3studio-main'." % e)
+
+if not hasattr(bpy.types.Object, "m3_materialrefs"):
+    raise SystemExit(
+        "m3studio addon loaded but its Blender properties are missing.\n"
+        "This usually means the addon wasn't fully registered.  Try restarting Blender once "
+        "with the addon enabled (open the GUI, confirm it shows in the sidebar, then quit).")
+print("m3studio enabled — props validated")
 
 for o in list(bpy.data.objects):
     bpy.data.objects.remove(o, do_unlink=True)
@@ -202,16 +232,16 @@ def add_material_for_wc3(mi, mat_def):
     base = file_layers[0] if file_layers else layers[0]
     blend = FILTER_TO_BLEND.get(base["filter"], "ALPHAB")
     try: mat.blend_mode = blend
-    except Exception as e: print("  blend warn", e)
+    except Exception as e: print("  blend warn mat[%d]: %s" % (mi, e))
     for flag, on in (("two_sided", base["twoSided"]), ("unshaded", base["unshaded"])):
         if on and hasattr(mat, flag):
             try: setattr(mat, flag, True)
-            except Exception: pass
+            except Exception as e: print("  warn mat[%d] %s: %s" % (mi, flag, e))
     if blend in ("ADD", "ALPHAA"):  # additive/alpha-test = glow-like: don't cast/receive shadows, no hit
         for fl in ("no_shadows_cast", "no_shadows_receive", "no_hittest"):
             if hasattr(mat, fl):
                 try: setattr(mat, fl, True)
-                except Exception: pass
+                except Exception as e: print("  warn mat[%d] %s: %s" % (mi, fl, e))
 
     # diffuse layer
     diff_dds = texture_dds_for(base["textureId"])
@@ -267,15 +297,21 @@ print("materials + batches assigned")
 FPS = 30.0
 
 def _interval(keys, t):
+    """Binary-search the keyframe interval containing time `t`.  Returns (lo, hi, frac)."""
     if t <= keys[0]["t"]:
         return 0, 0, 0.0
-    if t >= keys[-1]["t"]:
-        n = len(keys) - 1; return n, n, 0.0
-    for i in range(len(keys) - 1):
-        if keys[i]["t"] <= t <= keys[i + 1]["t"]:
-            span = keys[i + 1]["t"] - keys[i]["t"]
-            return i, i + 1, ((t - keys[i]["t"]) / span if span else 0.0)
-    n = len(keys) - 1; return n, n, 0.0
+    n = len(keys) - 1
+    if t >= keys[n]["t"]:
+        return n, n, 0.0
+    lo, hi = 0, n
+    while lo < hi - 1:
+        mid = (lo + hi) // 2
+        if keys[mid]["t"] <= t:
+            lo = mid
+        else:
+            hi = mid
+    span = keys[hi]["t"] - keys[lo]["t"]
+    return lo, hi, ((t - keys[lo]["t"]) / span if span else 0.0)
 
 def sample_scalar(track, t, default):
     if not track or not track["keys"]:
@@ -381,7 +417,7 @@ def build_animations():
         for attr, val in (("frequency", 100), ("movement_speed", float(seq.get("moveSpeed", 0.0))),
                           ("not_looping", bool(seq.get("nonLooping", False)))):
             try: setattr(grp, attr, val)
-            except Exception: pass
+            except Exception as e: print("  warn anim '%s' attr '%s': %s" % (nm, attr, e))
         sub = shared.m3_item_add(grp.animations, "full"); sub.action = act
         seq_actions[seq["name"]] = (act, nframes)
         print("  anim '%s' -> '%s'  frames 0..%d" % (seq["name"], nm, nframes))

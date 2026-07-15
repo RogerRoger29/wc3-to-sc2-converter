@@ -294,7 +294,42 @@ for ob, g in mesh_objs:
 print("materials + batches assigned")
 
 # ================================================================ 3.5) ANIMATIONS
-FPS = 30.0
+FPS = 30.0  # default; may be overridden per sequence by _estimate_seq_fps
+
+def _estimate_seq_fps(mdx_data):
+    """Estimate optimal baking FPS from keyframe density across all tracks."""
+    min_interval = float("inf")
+    for node in mdx_data.get("nodes", {}).values():
+        for track in node.get("tracks", {}).values():
+            keys = track.get("keys", [])
+            for a, b in zip(keys, keys[1:]):
+                dt = b["t"] - a["t"]
+                if 0 < dt < min_interval:
+                    min_interval = dt
+    if min_interval in (float("inf"), 0) or min_interval < 1:
+        return 30.0
+    fps = 1000.0 / min_interval
+    return max(10.0, min(60.0, round(fps / 5.0) * 5.0))
+
+
+def _reduce_keyframes(fcurves, tolerance=0.0005):
+    """Remove redundant keyframes within linear interpolation tolerance."""
+    removed = 0
+    for fc in fcurves:
+        pts = fc.keyframe_points
+        i = 1
+        while i < len(pts) - 1:
+            t0, v0 = pts[i - 1].co
+            t1, v1 = pts[i].co
+            t2, v2 = pts[i + 1].co
+            frac = (t1 - t0) / (t2 - t0) if t2 != t0 else 0.0
+            if abs(v1 - (v0 + (v2 - v0) * frac)) < tolerance:
+                pts.remove(pts[i])
+                removed += 1
+            else:
+                i += 1
+    return removed
+
 
 def _interval(keys, t):
     """Binary-search the keyframe interval containing time `t`.  Returns (lo, hi, frac)."""

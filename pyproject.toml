@@ -4,7 +4,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "wc3toSC2"
-version = "2.0.0"
+version = "2.1.0"
 description = "Convert Warcraft 3 .mdx models to StarCraft 2 .m3 models — with premium GUI"
 readme = "README.md"
 license = {text = "MIT"}
@@ -31,6 +31,7 @@ py-modules = [
     "convert", "mdx", "blp", "textures", "build_m3",
     "discovery", "diagnostics", "healer", "fuzzy_anims",
     "mpq_reader", "actor_gen", "main_window",
+    "blender_manager", "auto_updater", "team_color_mask", "normal_map_gen",
 ]
 
 [tool.setuptools.package-data]

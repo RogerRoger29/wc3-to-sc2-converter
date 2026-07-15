@@ -1,0 +1,16 @@
+{
+  "name": "Buildings",
+  "description": "For WC3 structures (Town Hall, Barracks, etc.). Larger scale, fewer particle effects.",
+  "scale": 0.06,
+  "particle_rate_scale": 1.0,
+  "particle_size_scale": 1.5,
+  "team_color": true,
+  "anim_names": {
+    "Stand": "Stand",
+    "Stand Work": "Stand Work",
+    "Death": "Death",
+    "Decay": "Death Disintegrate",
+    "Birth": "Birth",
+    "Portrait": "Portrait"
+  }
+}

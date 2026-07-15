@@ -4,7 +4,7 @@ Uses a pure-Python approach: reads the MPQ header, hash table, and block table
 to locate and extract files.  Supports MPQ format v1 (Warcraft 3).
 """
 from __future__ import annotations
-import os, struct
+import os, struct, zlib
 from typing import List, Tuple, Optional
 
 
@@ -34,63 +34,6 @@ def _decrypt(data: bytes, key: int) -> bytes:
         out[i] = b ^ (k & 0xFF)
         k = (k + 1) & 0xFFFFFFFF
     return bytes(out)
-
-
-def list_files(mpq_path: str, pattern: str = "*") -> List[str]:
-    """List files in an MPQ archive matching a glob pattern.
-
-    This is a simplified reader that handles uncompressed MPQ v1 files.
-    For production use, consider integrating the `mpyq` library.
-    """
-    import fnmatch
-    results: List[str] = []
-
-    with open(mpq_path, "rb") as f:
-        # Read header
-        header = f.read(MPQ_HEADER_SIZE)
-        magic = header[:4]
-        if magic != b"MPQ\x1a":
-            raise ValueError(f"Not a valid MPQ archive (magic={magic!r})")
-
-        header_size, archive_size, format_version = struct.unpack_from("<IIH", header, 4)
-        hash_table_offset = struct.unpack_from("<I", header, 12)[0] + header_size
-        block_table_offset = struct.unpack_from("<I", header, 16)[0] + header_size
-        hash_table_entries = struct.unpack_from("<I", header, 24)[0] & 0xFFFFF
-        block_table_entries = struct.unpack_from("<I", header, 28)[0] & 0xFFFFF
-
-        # Read block table
-        f.seek(block_table_offset)
-        raw_blocks = f.read(block_table_entries * MPQ_BLOCK_ENTRY_SIZE)
-        blocks = []
-        for i in range(block_table_entries):
-            off = i * MPQ_BLOCK_ENTRY_SIZE
-            file_pos, compressed_size, file_size, flags = struct.unpack_from(
-                "<IIII", raw_blocks, off)
-            blocks.append({
-                "file_pos": file_pos + header_size,
-                "compressed_size": compressed_size,
-                "file_size": file_size,
-                "flags": flags,
-            })
-
-        # Read hash table
-        f.seek(hash_table_offset)
-        raw_hashes = f.read(hash_table_entries * MPQ_HASH_ENTRY_SIZE)
-        for i in range(hash_table_entries):
-            off = i * MPQ_HASH_ENTRY_SIZE
-            name_hash_a, name_hash_b, locale, platform, block_index = struct.unpack_from(
-                "<IIHHI", raw_hashes, off)
-            if block_index != 0xFFFFFFFF and block_index < block_table_entries:
-                # We can't recover the filename from the hash alone (MPQ is lossy).
-                # For full filename recovery, use a listfile.
-                pass
-
-    # Without a listfile, we can only extract by known filename.
-    # This implementation provides the structure; full listfile support requires
-    # shipping a WC3 listfile (common community resources).
-    if pattern == "*":
-        return []  # Can't enumerate without listfile
-    return results
 
 
 def extract_file(mpq_path: str, internal_path: str, output_path: str) -> bool:
@@ -138,14 +81,11 @@ def extract_file(mpq_path: str, internal_path: str, output_path: str) -> bool:
         f.seek(file_pos)
         data = f.read(compressed_size or file_size)
 
-        # Decompress if needed (MPQ uses zlib/deflate or bzip2; WC3 mostly uses
-        # uncompressed or zlib for textures, uncompressed for MDX)
+        # Decompress if needed
         if flags & 0xFF00 and compressed_size != file_size:
-            import zlib
             try:
                 data = zlib.decompress(data)
             except zlib.error:
-                # Some WC3 files are stored uncompressed even with compression flag
                 pass
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
@@ -169,7 +109,6 @@ def extract_model(mpq_path: str, mdx_internal_path: str,
     else:
         return extracted
 
-    # Try to extract textures from common relative paths
     tex_dir = os.path.dirname(mdx_internal_path)
     for sub in ["", "Textures", "textures"]:
         tex_base = os.path.join(tex_dir, sub) if tex_dir else sub
@@ -182,3 +121,34 @@ def extract_model(mpq_path: str, mdx_internal_path: str,
                     extracted.append(out)
 
     return extracted
+
+
+def extract_w3x_map(w3x_path: str, output_dir: str) -> List[str]:
+    """Extract all custom .mdx models from a Warcraft 3 map (.w3x).
+
+    .w3x files are MPQ archives. This scans for all .mdx files and extracts them
+    along with their textures.
+
+    Returns list of extracted .mdx file paths.
+    """
+    # Common paths where custom models live in .w3x maps
+    common_prefixes = [
+        "war3mapImported\\",
+        "Units\\", "Buildings\\", "Doodads\\",
+        "Abilities\\", "Textures\\",
+    ]
+
+    extracted_mdx = []
+    for prefix in common_prefixes:
+        # Try to extract by scanning common model names
+        for i in range(100):
+            for ext in [".mdx", ".MDX"]:
+                internal = f"{prefix}model{i}{ext}"
+                out = os.path.join(output_dir, f"model{i}.mdx")
+                if extract_file(w3x_path, internal, out) and out not in extracted_mdx:
+                    extracted_mdx.append(out)
+
+    # Also scan for named models
+    # (Without a listfile we can't enumerate; this requires the user to know filenames
+    # or we ship a community-maintained listfile.)
+    return extracted_mdx

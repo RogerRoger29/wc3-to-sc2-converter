@@ -1,0 +1,20 @@
+name: Build EXE
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt pyinstaller
+      - run: pyinstaller wc3toSC2.spec --clean --noconfirm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wc3toSC2-exe
+          path: dist/wc3toSC2.exe

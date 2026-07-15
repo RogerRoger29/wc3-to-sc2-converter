@@ -1,6 +1,4 @@
 """WC3 -> SC2 Model Converter - PySide6 GUI Application.
-Double-click EXE, drag-drop .mdx, auto-conversion.
-All features exposed as user-configurable settings.
 
 Usage: python main_window.py [model.mdx] [--silent] [--cli]
 """
@@ -16,10 +14,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QTreeWidget, QTreeWidgetItem, QPushButton, QLabel,
     QPlainTextEdit, QProgressBar, QFileDialog, QCheckBox, QLineEdit,
-    QGroupBox, QSplitter, QHeaderView, QStyleFactory, QScrollArea, QComboBox,
+    QGroupBox, QSplitter, QHeaderView, QStyleFactory, QScrollArea, QComboBox, QMenu,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer, QSettings
-from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor, QPixmap, QPalette
+from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor, QPixmap, QPalette, QAction
 
 import mdx as mdxlib, diagnostics, healer, discovery, fuzzy_anims, actor_gen, preview
 import auto_updater, blender_manager
@@ -73,7 +71,7 @@ class ConversionWorker(QObject):
 
 class MainWindow(QMainWindow):
     def __init__(self,auto_files=None):
-        super().__init__(); self.setWindowTitle("WC3 -> SC2 Model Converter v3.1"); self.resize(1280,850); self.setMinimumSize(960,620)
+        super().__init__(); self.setWindowTitle("WC3 -> SC2 Model Converter v3.2"); self.resize(1280,850); self.setMinimumSize(960,620)
         self.jobs:Dict[str,ModelJob]={}; self.settings=QSettings("wc3toSC2","Converter"); self.worker=None; self.worker_thread=None
         self._load_all_settings(); self._setup_theme(); self._setup_ui(); self._restore_session(); self._check_updates()
         if auto_files:
@@ -102,6 +100,8 @@ class MainWindow(QMainWindow):
         self.welcome.setAlignment(Qt.AlignCenter); self.welcome.setVisible(True); ll.addWidget(self.welcome)
         self.queue_tree=QTreeWidget(); self.queue_tree.setHeaderLabels(["Model","Status","Progress","Warnings"])
         self.queue_tree.setAlternatingRowColors(True); self.queue_tree.setDragDropMode(self.queue_tree.DragDropMode.DropOnly); self.queue_tree.setAcceptDrops(True)
+        self.queue_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.queue_tree.customContextMenuRequested.connect(self._context_menu)
         self.queue_tree.dragEnterEvent=lambda e: e.acceptProposedAction() if e.mimeData().hasUrls() else None
         self.queue_tree.dropEvent=self._drop; self.queue_tree.itemSelectionChanged.connect(self._on_select)
         for i,c in enumerate([QHeaderView.Stretch,QHeaderView.ResizeToContents,QHeaderView.ResizeToContents,QHeaderView.ResizeToContents]):
@@ -109,64 +109,68 @@ class MainWindow(QMainWindow):
         self.queue_tree.setVisible(False); ll.addWidget(self.queue_tree)
         br=QHBoxLayout(); add=QPushButton("+ Add Models"); add.clicked.connect(self._add_models); br.addWidget(add)
         fd=QPushButton("Folder"); fd.clicked.connect(self._add_folder); br.addWidget(fd)
+        rm=QPushButton("Remove Selected"); rm.clicked.connect(self._remove_selected); br.addWidget(rm)
         cl=QPushButton("Clear Done"); cl.clicked.connect(self._clear_done); br.addWidget(cl); br.addStretch()
         self.cvt_btn=QPushButton("Convert All"); self.cvt_btn.setStyleSheet("background:#a6e3a1;color:#1e1e2e;font-weight:bold;padding:6px 20px"); self.cvt_btn.clicked.connect(self._start); br.addWidget(self.cvt_btn)
         self.stp_btn=QPushButton("Stop"); self.stp_btn.setEnabled(False); self.stp_btn.clicked.connect(self._cancel); br.addWidget(self.stp_btn); ll.addLayout(br); sp.addWidget(left)
         right=QWidget(); rl=QVBoxLayout(right); rl.setContentsMargins(4,0,0,0)
         self.preview_lbl=QLabel(); self.preview_lbl.setAlignment(Qt.AlignCenter); self.preview_lbl.setMinimumHeight(200)
         self.preview_lbl.setStyleSheet("background:#1e1e2e;border:1px solid #313244;border-radius:4px")
-        self.preview_lbl.setText("<span style='color:#6c7086'>Model preview</span>"); rl.addWidget(self.preview_lbl,2)
+        self.preview_lbl.setText("<span style='color:#6c7086'>Select a model to see details</span>"); rl.addWidget(self.preview_lbl,2)
         self.log_view=QPlainTextEdit(); self.log_view.setReadOnly(True); self.log_view.setFont(QFont("Consolas",10)); self.log_view.setMaximumBlockCount(5000); rl.addWidget(self.log_view,3)
         self.ov_prog=QProgressBar(); self.ov_prog.setVisible(False); rl.addWidget(self.ov_prog); sp.addWidget(right); sp.setSizes([550,650])
         ml=QVBoxLayout(tab); ml.addWidget(sp); return tab
 
     def _settings_tab(self):
         tab=QWidget(); sc=QScrollArea(); sc.setWidgetResizable(True); w=QWidget(); lo=QVBoxLayout(w)
-        gb=QGroupBox("Blender"); gl=QVBoxLayout(gb)
-        hb=QHBoxLayout(); self._be=QLineEdit(self._bp); self._be.setPlaceholderText("Auto-detect"); hb.addWidget(QLabel("Path:")); hb.addWidget(self._be)
-        a=QPushButton("Auto-Detect"); a.clicked.connect(self._auto_blender); hb.addWidget(a)
-        b=QPushButton("Browse..."); b.clicked.connect(lambda: self._browse(self._be,"blender.exe","Blender (*.exe);;All (*)")); hb.addWidget(b); gl.addLayout(hb)
-        self._oc_btn=QPushButton("One-Click Setup (Download Blender + Addon)"); self._oc_btn.setStyleSheet("background:#f9e2af;color:#1e1e2e;font-weight:bold;padding:8px"); self._oc_btn.clicked.connect(self._oneclick); gl.addWidget(self._oc_btn)
-        self._bs=QLabel("Not checked"); gl.addWidget(self._bs); lo.addWidget(gb)
-        gb2=QGroupBox("Scale & Output"); gl2=QVBoxLayout(gb2)
-        hd=QHBoxLayout(); hd.addWidget(QLabel("Scale:")); self._se=QLineEdit(str(self._scale)); hd.addWidget(self._se); gl2.addLayout(hd)
-        hd=QHBoxLayout(); hd.addWidget(QLabel("Particle rate:")); self._pe=QLineEdit(str(self._prate)); hd.addWidget(self._pe); gl2.addLayout(hd)
-        hd=QHBoxLayout(); hd.addWidget(QLabel("Particle size:")); self._pse=QLineEdit(str(self._psize)); hd.addWidget(self._pse); gl2.addLayout(hd)
-        hd=QHBoxLayout(); hd.addWidget(QLabel("Output dir:")); self._oe=QLineEdit(str(self._od)); hd.addWidget(self._oe); gl2.addLayout(hd)
-        lo.addWidget(gb2)
-        gb3=QGroupBox("Animation Quality"); gl3=QVBoxLayout(gb3)
-        hf=QHBoxLayout(); hf.addWidget(QLabel("FPS mode:")); self._fps_cb=QComboBox(); self._fps_cb.addItems(["Auto-detect","30","60","15","10"]); self._fps_cb.setCurrentText(self._fps_mode); hf.addWidget(self._fps_cb); gl3.addLayout(hf)
-        self._squad_cb=QCheckBox("Squad quaternion interpolation"); self._squad_cb.setChecked(self._squad); gl3.addWidget(self._squad_cb)
-        self._kf_cb=QCheckBox("Keyframe reduction"); self._kf_cb.setChecked(self._kf_reduce); gl3.addWidget(self._kf_cb)
-        lo.addWidget(gb3)
-        gb4=QGroupBox("Mesh & LOD"); gl4=QVBoxLayout(gb4)
-        self._lod_cb=QComboBox(); self._lod_cb.addItems(["No LOD","LOD1 (50% tris)","LOD1+LOD2"]); self._lod_cb.setCurrentIndex(self._lod_level); gl4.addWidget(self._lod_cb)
-        lo.addWidget(gb4)
-        gb5=QGroupBox("Team Color"); gl5=QVBoxLayout(gb5)
-        self._tc_cb=QComboBox(); self._tc_cb.addItems(["TEAMEMIS (diffuse)","UV Mask (accurate)","Off"]); self._tc_cb.setCurrentIndex(self._tc_mode); gl5.addWidget(self._tc_cb)
-        lo.addWidget(gb5)
-        gb6=QGroupBox("PBR & Normals"); gl6=QVBoxLayout(gb6)
-        self._nm_cb=QCheckBox("Generate normal maps"); self._nm_cb.setChecked(self._normals); gl6.addWidget(self._nm_cb)
-        hd2=QHBoxLayout(); hd2.addWidget(QLabel("Strength:")); self._ns_e=QLineEdit(str(self._nm_strength)); hd2.addWidget(self._ns_e); gl6.addLayout(hd2)
-        lo.addWidget(gb6)
-        gb7=QGroupBox("Pipeline"); gl7=QVBoxLayout(gb7)
-        self._mt_cb=QCheckBox("Multi-threaded textures"); self._mt_cb.setChecked(self._multi_tex); gl7.addWidget(self._mt_cb)
-        self._cache_cb=QCheckBox("MDX parse cache"); self._cache_cb.setChecked(self._mdx_cache); gl7.addWidget(self._cache_cb)
-        self._aa_cb=QCheckBox("Auto-detect inverted alpha"); self._aa_cb.setChecked(self._auto_alpha); gl7.addWidget(self._aa_cb)
-        self._as_cb=QCheckBox("Auto-estimate scale"); self._as_cb.setChecked(self._auto_scale); gl7.addWidget(self._as_cb)
-        self._fa_cb=QCheckBox("Fuzzy-match animations"); self._fa_cb.setChecked(self._fuzzy_anims); gl7.addWidget(self._fa_cb)
-        lo.addWidget(gb7)
-        gb8=QGroupBox("Output"); gl8=QVBoxLayout(gb8)
-        self._ax_cb=QCheckBox("Generate SC2 actor XML"); self._ax_cb.setChecked(self._gen_actor); gl8.addWidget(self._ax_cb)
-        self._gr_cb=QCheckBox("Generate HTML report"); self._gr_cb.setChecked(self._gen_report); gl8.addWidget(self._gr_cb)
-        lo.addWidget(gb8)
-        sv=QPushButton("Save Settings"); sv.clicked.connect(self._save_all); lo.addWidget(sv); lo.addStretch()
+        try:
+            gb=QGroupBox("Blender"); gl=QVBoxLayout(gb)
+            hb=QHBoxLayout(); self._be=QLineEdit(getattr(self,'_bp','')); self._be.setPlaceholderText("Auto-detect"); hb.addWidget(QLabel("Path:")); hb.addWidget(self._be)
+            a=QPushButton("Auto-Detect"); a.clicked.connect(self._auto_blender); hb.addWidget(a)
+            b=QPushButton("Browse..."); b.clicked.connect(lambda: self._browse(self._be,"blender.exe","Blender (*.exe);;All (*)")); hb.addWidget(b); gl.addLayout(hb)
+            self._oc_btn=QPushButton("One-Click Setup (Download Blender + Addon)"); self._oc_btn.setStyleSheet("background:#f9e2af;color:#1e1e2e;font-weight:bold;padding:8px"); self._oc_btn.clicked.connect(self._oneclick); gl.addWidget(self._oc_btn)
+            self._bs=QLabel("Not checked"); gl.addWidget(self._bs); lo.addWidget(gb)
+            gb2=QGroupBox("Scale & Output"); gl2=QVBoxLayout(gb2)
+            hd=QHBoxLayout(); hd.addWidget(QLabel("Scale:")); self._se=QLineEdit(str(getattr(self,'_scale',0.05))); hd.addWidget(self._se); gl2.addLayout(hd)
+            hd=QHBoxLayout(); hd.addWidget(QLabel("Particle rate:")); self._pe=QLineEdit(str(getattr(self,'_prate',1.0))); hd.addWidget(self._pe); gl2.addLayout(hd)
+            hd=QHBoxLayout(); hd.addWidget(QLabel("Particle size:")); self._pse=QLineEdit(str(getattr(self,'_psize',1.0))); hd.addWidget(self._pse); gl2.addLayout(hd)
+            hd=QHBoxLayout(); hd.addWidget(QLabel("Output dir:")); self._oe=QLineEdit(str(getattr(self,'_od','./out'))); hd.addWidget(self._oe); gl2.addLayout(hd)
+            lo.addWidget(gb2)
+            gb3=QGroupBox("Animation Quality"); gl3=QVBoxLayout(gb3)
+            hf=QHBoxLayout(); hf.addWidget(QLabel("FPS mode:")); self._fps_cb=QComboBox(); self._fps_cb.addItems(["Auto-detect","30","60","15","10"]); self._fps_cb.setCurrentText(getattr(self,'_fps_mode','Auto-detect')); hf.addWidget(self._fps_cb); gl3.addLayout(hf)
+            self._squad_cb=QCheckBox("Squad quaternion interpolation"); self._squad_cb.setChecked(getattr(self,'_squad',True)); gl3.addWidget(self._squad_cb)
+            self._kf_cb=QCheckBox("Keyframe reduction"); self._kf_cb.setChecked(getattr(self,'_kf_reduce',True)); gl3.addWidget(self._kf_cb)
+            lo.addWidget(gb3)
+            gb4=QGroupBox("Mesh & LOD"); gl4=QVBoxLayout(gb4)
+            self._lod_cb=QComboBox(); self._lod_cb.addItems(["No LOD","LOD1 (50% tris)","LOD1+LOD2"]); self._lod_cb.setCurrentIndex(getattr(self,'_lod_level',0)); gl4.addWidget(self._lod_cb)
+            lo.addWidget(gb4)
+            gb5=QGroupBox("Team Color"); gl5=QVBoxLayout(gb5)
+            self._tc_cb=QComboBox(); self._tc_cb.addItems(["TEAMEMIS (diffuse)","UV Mask (accurate)","Off"]); self._tc_cb.setCurrentIndex(getattr(self,'_tc_mode',0)); gl5.addWidget(self._tc_cb)
+            lo.addWidget(gb5)
+            gb6=QGroupBox("PBR & Normals"); gl6=QVBoxLayout(gb6)
+            self._nm_cb=QCheckBox("Generate normal maps"); self._nm_cb.setChecked(getattr(self,'_normals',False)); gl6.addWidget(self._nm_cb)
+            hd2=QHBoxLayout(); hd2.addWidget(QLabel("Strength:")); self._ns_e=QLineEdit(str(getattr(self,'_nm_strength',1.0))); hd2.addWidget(self._ns_e); gl6.addLayout(hd2)
+            lo.addWidget(gb6)
+            gb7=QGroupBox("Pipeline"); gl7=QVBoxLayout(gb7)
+            self._mt_cb=QCheckBox("Multi-threaded textures"); self._mt_cb.setChecked(getattr(self,'_multi_tex',True)); gl7.addWidget(self._mt_cb)
+            self._cache_cb=QCheckBox("MDX parse cache"); self._cache_cb.setChecked(getattr(self,'_mdx_cache',True)); gl7.addWidget(self._cache_cb)
+            self._aa_cb=QCheckBox("Auto-detect inverted alpha"); self._aa_cb.setChecked(getattr(self,'_auto_alpha',True)); gl7.addWidget(self._aa_cb)
+            self._as_cb=QCheckBox("Auto-estimate scale"); self._as_cb.setChecked(getattr(self,'_auto_scale',True)); gl7.addWidget(self._as_cb)
+            self._fa_cb=QCheckBox("Fuzzy-match animations"); self._fa_cb.setChecked(getattr(self,'_fuzzy_anims',True)); gl7.addWidget(self._fa_cb)
+            lo.addWidget(gb7)
+            gb8=QGroupBox("Output"); gl8=QVBoxLayout(gb8)
+            self._ax_cb=QCheckBox("Generate SC2 actor XML"); self._ax_cb.setChecked(getattr(self,'_gen_actor',True)); gl8.addWidget(self._ax_cb)
+            self._gr_cb=QCheckBox("Generate HTML report"); self._gr_cb.setChecked(getattr(self,'_gen_report',True)); gl8.addWidget(self._gr_cb)
+            lo.addWidget(gb8)
+            sv=QPushButton("Save Settings"); sv.clicked.connect(self._save_all); lo.addWidget(sv); lo.addStretch()
+        except Exception as e:
+            lo.addWidget(QLabel(f"Settings failed to load: {e}\n\nTry resetting settings by deleting registry key:\nHKCU\\Software\\wc3toSC2"))
         sc.setWidget(w); tl=QVBoxLayout(tab); tl.addWidget(sc); return tab
 
     def _about_tab(self):
         t=QWidget(); l=QVBoxLayout(t); l.setAlignment(Qt.AlignCenter)
         l.addWidget(QLabel("<h1 style='color:#89b4fa'>WC3 to SC2 Model Converter</h1>"))
-        l.addWidget(QLabel("<p>Version 3.1.0</p>"))
+        l.addWidget(QLabel("<p>Version 3.2.0</p>"))
         l.addWidget(QLabel("<p><a href='https://github.com/RogerRoger29/wc3-to-sc2-converter' style='color:#89b4fa'>GitHub</a></p>"))
         return t
 
@@ -192,7 +196,6 @@ class MainWindow(QMainWindow):
         self.jobs[p]=j; self._add_item(j)
         if not silent: self._log("INFO","Added: "+n)
         self._vis(); self._save_session()
-        # Parse MDX in background to keep UI responsive
         def _bg_parse():
             try:
                 md=mdxlib.parse(p)
@@ -221,9 +224,43 @@ class MainWindow(QMainWindow):
         its=self.queue_tree.selectedItems()
         if not its: return
         p=its[0].data(0,Qt.UserRole); j=self.jobs.get(p)
-        if j and j.preview_path and os.path.exists(j.preview_path):
+        if not j: return
+        if j.preview_path and os.path.exists(j.preview_path):
             self.preview_lbl.setPixmap(QPixmap(j.preview_path).scaled(480,480,Qt.KeepAspectRatio,Qt.SmoothTransformation))
-        elif j: self.preview_lbl.setText(f"<span style='color:#6c7086'>{j.model_name}<br>{j.texture_count} textures, {j.animation_count} anims</span>")
+        elif j.mdx_data:
+            self.preview_lbl.setText(f"<span style='color:#a6e3a1'><b>{j.model_name}</b></span><br><span style='color:#cdd6f4'>{j.texture_count} textures, {j.animation_count} animations<br>Scale: {j.scale}</span>")
+        else:
+            self.preview_lbl.setText(f"<span style='color:#f9e2af'><b>{j.model_name}</b></span><br><span style='color:#a6adc8'>Parsing model data...</span>")
+
+    def _remove_selected(self):
+        for it in self.queue_tree.selectedItems():
+            p=it.data(0,Qt.UserRole)
+            if p in self.jobs and self.jobs[p].status=="queued":
+                self._log("INFO","Removed: "+self.jobs[p].model_name)
+                del self.jobs[p]
+                self.queue_tree.takeTopLevelItem(self.queue_tree.indexOfTopLevelItem(it))
+        self._vis(); self._save_session()
+
+    def _context_menu(self,pos):
+        it=self.queue_tree.itemAt(pos)
+        if not it: return
+        p=it.data(0,Qt.UserRole); j=self.jobs.get(p)
+        if not j: return
+        menu=QMenu(self)
+        if j.status=="queued":
+            menu.addAction("Remove").triggered.connect(lambda: self._remove_one(p))
+        if j.status=="done" and j.output_path:
+            menu.addAction("Open Output Folder").triggered.connect(lambda: os.startfile(os.path.dirname(j.output_path)))
+        menu.exec(self.queue_tree.viewport().mapToGlobal(pos))
+
+    def _remove_one(self,p):
+        if p in self.jobs and self.jobs[p].status=="queued":
+            self._log("INFO","Removed: "+self.jobs[p].model_name)
+            del self.jobs[p]
+            for i in range(self.queue_tree.topLevelItemCount()):
+                it=self.queue_tree.topLevelItem(i)
+                if it.data(0,Qt.UserRole)==p: self.queue_tree.takeTopLevelItem(i); break
+            self._vis(); self._save_session()
 
     def _clear_done(self):
         for i in range(self.queue_tree.topLevelItemCount()-1,-1,-1):
@@ -240,12 +277,11 @@ class MainWindow(QMainWindow):
         q=[j for j in self.jobs.values() if j.status=="queued"]
         if not q: self._done(); return
         j=q[0]; j.start_time=time.time(); self._log("INFO",">> "+j.model_name)
-        # Wait for background parse if still running (short timeout)
         waited=0
         while j.mdx_data is None and waited<30:
             time.sleep(0.1); waited+=0.1
         if j.mdx_data is None:
-            self._log("ERROR","MDX parse incomplete — skipping"); j.status="failed"; self._upd(j); self._next(); return
+            self._log("ERROR","MDX parse incomplete - skipping"); j.status="failed"; self._upd(j); self._next(); return
         md=j.mdx_data
         if self._auto_scale: s,c=discovery.estimate_scale(md); j.scale=s; self._log("INFO",f"Scale: {s} ({c})")
         od=self._od or os.path.join(os.path.dirname(j.mdx_path),"out"); os.makedirs(od,exist_ok=True)

@@ -124,7 +124,7 @@ class MainWindow(QMainWindow):
     def __init__(self,auto_files=None):
         super().__init__(); self.setWindowTitle("WC3 to SC2 Converter"); self.resize(1280,850); self.setMinimumSize(960,620)
         self.jobs:Dict[str,ModelJob]={}; self.settings=QSettings("wc3toSC2","Converter"); self.worker=None; self.worker_thread=None
-        self._settings_widget=None; self._settings_loading=False; self._pulse_timer=None
+        self._settings_widget=None; self._settings_loading=False; self._settings_inserted=False; self._pulse_timer=None
         self._load_all_settings(); self._setup_theme(); self._setup_ui(); self._start_settings_cache()
         self._restore_session(); self._check_updates()
         if auto_files:
@@ -161,15 +161,17 @@ class MainWindow(QMainWindow):
 
     def _on_settings_ready(self,w):
         self._settings_widget=w; self._settings_loading=False
-        if self.tabs.currentIndex()==1:
+        if self.tabs.currentIndex()==1 and not self._settings_inserted:
             self.tabs.widget(1).deleteLater()
             self.tabs.insertTab(1,w,"Settings"); self.tabs.setCurrentIndex(1)
+            self._settings_inserted=True
 
     def _on_tab_change(self,idx):
-        if idx==1:
+        if idx==1 and not self._settings_inserted:
             if self._settings_widget:
                 self.tabs.widget(1).deleteLater()
                 self.tabs.insertTab(1,self._settings_widget,"Settings"); self.tabs.setCurrentIndex(1)
+                self._settings_inserted=True
             elif self._settings_loading:
                 self.tabs.widget(1).deleteLater()
                 lb=QLabel("<div style='color:#e0af68;font-size:16px;padding:40px;text-align:center'>Loading settings...</div>")

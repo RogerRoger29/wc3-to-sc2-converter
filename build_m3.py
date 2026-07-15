@@ -631,6 +631,25 @@ def bake_property_animations():
                     fc = act.fcurves.find(path, index=idx) or act.fcurves.new(path, index=idx)
                     for jf, v in zip(frames, vals):
                         kp = fc.keyframe_points.insert(jf, v if idx == 3 else 1.0); kp.interpolation = "LINEAR"
+        # geoset color animation (KGAC) — bake RGB into diffuse color_value
+        geoa_col = {ga["geosetId"]: ga["tracks"].get("color") for ga in m.get("geosetAnims", [])}
+        for matid, diff_handle in mat_anim.items():
+            gc = geoa_col.get(mat_geoset.get(matid))
+            if not gc or not gc.get("keys"):
+                continue
+            diff = _by_handle(arm.m3_materiallayers, diff_handle)
+            if not diff:
+                continue
+            r_vals = [clamp01(sample_vec(gc, s_ms + jf * (1000.0 / FPS), (1, 1, 1))) for jf in frames]
+            if any(abs(v[0] - 1.0) > 0.001 or abs(v[1] - 1.0) > 0.001 or abs(v[2] - 1.0) > 0.001 for v in r_vals):
+                diff.color_value_header.interpolation = "LINEAR"
+                path = diff.path_from_id("color_value")
+                for idx in range(4):
+                    fc = act.fcurves.find(path, index=idx) or act.fcurves.new(path, index=idx)
+                    for jf, v in zip(frames, r_vals):
+                        kp = fc.keyframe_points.insert(jf, v[idx] if idx < 3 else 1.0)
+                        kp.interpolation = "LINEAR"
+                print("  baked KGAC color for mat[%d]" % matid)
         # particle emission gating (KP2V)
         for ps_handle, e in particle_anim:
             kp2v = e.get("emission")

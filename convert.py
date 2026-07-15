@@ -169,9 +169,10 @@ def main():
             continue
         glow = ov.get("glow", i in particle_texids)
         alpha_invert = ov.get("alpha_invert", False)
+        glow_dim = float(ov.get("glow_dim", 0.7))
         try:
             size, mips = tex.convert_texture(src, os.path.join(out_dir, out_name),
-                                             alpha_invert=alpha_invert, glow=glow)
+                                             alpha_invert=alpha_invert, glow=glow, glow_dim=glow_dim)
         except Exception as e:
             log.error("  tex[%d] %s — conversion FAILED: %s", i, os.path.basename(src), e)
             missing.append((i, t["path"]))

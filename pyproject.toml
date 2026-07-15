@@ -18,8 +18,8 @@ dependencies = [
 wc3toSC2 = "convert:main"
 
 [project.urls]
-Homepage = "https://github.com/user/wc3toSC2"
-Issues = "https://github.com/user/wc3toSC2/issues"
+Homepage = "https://github.com/RogerRoger29/wc3-to-sc2-converter"
+Issues = "https://github.com/RogerRoger29/wc3-to-sc2-converter/issues"
 
 [tool.setuptools]
 py-modules = ["convert", "mdx", "blp", "textures", "build_m3"]

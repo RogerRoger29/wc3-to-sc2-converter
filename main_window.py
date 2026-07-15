@@ -31,7 +31,7 @@ class ModelJob:
     mdx_path: str = ""; model_name: str = ""; status: str = "queued"; progress: int = 0
     warnings: list = field(default_factory=list); errors: list = field(default_factory=list)
     output_path: str = ""; report_html: str = ""; preview_path: str = ""
-    scale: float = 0.05; particle_rate: float = 1.0; mdx_data = None
+    scale: float = 0.05; particle_rate: float = 1.0; mdx_data: dict = None
     texture_count: int = 0; animation_count: int = 0; start_time: float = 0.0
     def to_dict(self): return {"mdx_path":self.mdx_path,"model_name":self.model_name,"scale":self.scale,"particle_rate":self.particle_rate}
     @staticmethod
@@ -122,40 +122,33 @@ class MainWindow(QMainWindow):
 
     def _settings_tab(self):
         tab=QWidget(); sc=QScrollArea(); sc.setWidgetResizable(True); w=QWidget(); lo=QVBoxLayout(w)
-
         gb=QGroupBox("Blender"); gl=QVBoxLayout(gb)
         hb=QHBoxLayout(); self._be=QLineEdit(self._bp); self._be.setPlaceholderText("Auto-detect"); hb.addWidget(QLabel("Path:")); hb.addWidget(self._be)
         a=QPushButton("Auto-Detect"); a.clicked.connect(self._auto_blender); hb.addWidget(a)
         b=QPushButton("Browse..."); b.clicked.connect(lambda: self._browse(self._be,"blender.exe","Blender (*.exe);;All (*)")); hb.addWidget(b); gl.addLayout(hb)
         self._oc_btn=QPushButton("One-Click Setup (Download Blender + Addon)"); self._oc_btn.setStyleSheet("background:#f9e2af;color:#1e1e2e;font-weight:bold;padding:8px"); self._oc_btn.clicked.connect(self._oneclick); gl.addWidget(self._oc_btn)
         self._bs=QLabel("Not checked"); gl.addWidget(self._bs); lo.addWidget(gb)
-
         gb2=QGroupBox("Scale & Output"); gl2=QVBoxLayout(gb2)
         hd=QHBoxLayout(); hd.addWidget(QLabel("Scale:")); self._se=QLineEdit(str(self._scale)); hd.addWidget(self._se); gl2.addLayout(hd)
         hd=QHBoxLayout(); hd.addWidget(QLabel("Particle rate:")); self._pe=QLineEdit(str(self._prate)); hd.addWidget(self._pe); gl2.addLayout(hd)
         hd=QHBoxLayout(); hd.addWidget(QLabel("Particle size:")); self._pse=QLineEdit(str(self._psize)); hd.addWidget(self._pse); gl2.addLayout(hd)
         hd=QHBoxLayout(); hd.addWidget(QLabel("Output dir:")); self._oe=QLineEdit(str(self._od)); hd.addWidget(self._oe); gl2.addLayout(hd)
         lo.addWidget(gb2)
-
         gb3=QGroupBox("Animation Quality"); gl3=QVBoxLayout(gb3)
         hf=QHBoxLayout(); hf.addWidget(QLabel("FPS mode:")); self._fps_cb=QComboBox(); self._fps_cb.addItems(["Auto-detect","30","60","15","10"]); self._fps_cb.setCurrentText(self._fps_mode); hf.addWidget(self._fps_cb); gl3.addLayout(hf)
         self._squad_cb=QCheckBox("Squad quaternion interpolation"); self._squad_cb.setChecked(self._squad); gl3.addWidget(self._squad_cb)
         self._kf_cb=QCheckBox("Keyframe reduction"); self._kf_cb.setChecked(self._kf_reduce); gl3.addWidget(self._kf_cb)
         lo.addWidget(gb3)
-
         gb4=QGroupBox("Mesh & LOD"); gl4=QVBoxLayout(gb4)
         self._lod_cb=QComboBox(); self._lod_cb.addItems(["No LOD","LOD1 (50% tris)","LOD1+LOD2"]); self._lod_cb.setCurrentIndex(self._lod_level); gl4.addWidget(self._lod_cb)
         lo.addWidget(gb4)
-
         gb5=QGroupBox("Team Color"); gl5=QVBoxLayout(gb5)
         self._tc_cb=QComboBox(); self._tc_cb.addItems(["TEAMEMIS (diffuse)","UV Mask (accurate)","Off"]); self._tc_cb.setCurrentIndex(self._tc_mode); gl5.addWidget(self._tc_cb)
         lo.addWidget(gb5)
-
         gb6=QGroupBox("PBR & Normals"); gl6=QVBoxLayout(gb6)
         self._nm_cb=QCheckBox("Generate normal maps"); self._nm_cb.setChecked(self._normals); gl6.addWidget(self._nm_cb)
         hd2=QHBoxLayout(); hd2.addWidget(QLabel("Strength:")); self._ns_e=QLineEdit(str(self._nm_strength)); hd2.addWidget(self._ns_e); gl6.addLayout(hd2)
         lo.addWidget(gb6)
-
         gb7=QGroupBox("Pipeline"); gl7=QVBoxLayout(gb7)
         self._mt_cb=QCheckBox("Multi-threaded textures"); self._mt_cb.setChecked(self._multi_tex); gl7.addWidget(self._mt_cb)
         self._cache_cb=QCheckBox("MDX parse cache"); self._cache_cb.setChecked(self._mdx_cache); gl7.addWidget(self._cache_cb)
@@ -163,12 +156,10 @@ class MainWindow(QMainWindow):
         self._as_cb=QCheckBox("Auto-estimate scale"); self._as_cb.setChecked(self._auto_scale); gl7.addWidget(self._as_cb)
         self._fa_cb=QCheckBox("Fuzzy-match animations"); self._fa_cb.setChecked(self._fuzzy_anims); gl7.addWidget(self._fa_cb)
         lo.addWidget(gb7)
-
         gb8=QGroupBox("Output"); gl8=QVBoxLayout(gb8)
         self._ax_cb=QCheckBox("Generate SC2 actor XML"); self._ax_cb.setChecked(self._gen_actor); gl8.addWidget(self._ax_cb)
         self._gr_cb=QCheckBox("Generate HTML report"); self._gr_cb.setChecked(self._gen_report); gl8.addWidget(self._gr_cb)
         lo.addWidget(gb8)
-
         sv=QPushButton("Save Settings"); sv.clicked.connect(self._save_all); lo.addWidget(sv); lo.addStretch()
         sc.setWidget(w); tl=QVBoxLayout(tab); tl.addWidget(sc); return tab
 
@@ -198,7 +189,9 @@ class MainWindow(QMainWindow):
         if p in self.jobs: return
         n=os.path.splitext(os.path.basename(p))[0]; j=ModelJob(mdx_path=p,model_name=n,scale=self._scale,particle_rate=self._prate)
         try:
-            j.mdx_data=mdxlib.parse(p); j.texture_count=len(j.mdx_data.get("textures",[])); j.animation_count=len(m.get("sequences",[]))
+            j.mdx_data=mdxlib.parse(p)
+            j.texture_count=len(j.mdx_data.get("textures",[]))
+            j.animation_count=len(j.mdx_data.get("sequences",[]))
         except: pass
         self.jobs[p]=j; self._add_item(j)
         if not silent: self._log("INFO","Added: "+n)

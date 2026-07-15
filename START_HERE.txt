@@ -6,6 +6,24 @@ textures, skeleton, animations, team color, and particle effects. There's a
 Naaru model included so you can test it before doing your own.
 
 
+The Easy Way (Double-Click the EXE)
+-----------------------------------
+
+If you downloaded the .exe:
+  1. Double-click wc3toSC2.exe
+  2. Drag your .mdx file onto the window
+  3. Click Convert All
+
+The program handles everything: scale estimation, texture finding,
+animation matching, and Blender setup. No config files needed.
+
+For the One-Click Setup button in Settings, the program can download
+Blender and the m3studio addon automatically. Just click it once.
+
+
+The CLI Way (Command Line)
+--------------------------
+
 What you need (one-time setup)
 ------------------------------
 

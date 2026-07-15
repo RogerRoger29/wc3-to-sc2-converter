@@ -74,6 +74,7 @@ class ModelJob:
     output_path: str = ""; report_html: str = ""; preview_path: str = ""
     scale: float = 0.05; particle_rate: float = 1.0; mdx_data: dict = None
     texture_count: int = 0; animation_count: int = 0; start_time: float = 0.0
+    _lock: object = field(default_factory=threading.Lock)
     def to_dict(self): return {"mdx_path":self.mdx_path,"model_name":self.model_name,"scale":self.scale,"particle_rate":self.particle_rate}
     @staticmethod
     def from_dict(d): return ModelJob(mdx_path=d.get("mdx_path",""),model_name=d.get("model_name",""),scale=d.get("scale",0.05),particle_rate=d.get("particle_rate",1.0))
@@ -81,7 +82,6 @@ class ModelJob:
 class ConversionSignals(QObject):
     progress=Signal(str,int); log_message=Signal(str,str); status_change=Signal(str,str)
     job_done=Signal(str,bool,str); report_ready=Signal(str,str)
-    settings_ready=Signal(object)
 
 class ConversionWorker(QObject):
     def __init__(self,blender=""): super().__init__(); self.signals=ConversionSignals(); self._blender=blender; self._cancelled=False
@@ -113,20 +113,13 @@ class ConversionWorker(QObject):
             self.signals.progress.emit(job.mdx_path,100); job.status="done"; job.output_path=build_cfg["out"]; self.signals.job_done.emit(job.mdx_path,True,build_cfg["out"])
         except Exception as ex: self.signals.log_message.emit("ERROR",str(ex)); job.status="failed"; self.signals.job_done.emit(job.mdx_path,False,"")
 
-class SettingsBuilder(QObject):
-    ready=Signal(object)
-    def __init__(self,main_window): super().__init__(); self.mw=main_window
-    def build(self):
-        w=self.mw._build_settings()
-        self.ready.emit(w)
-
 class MainWindow(QMainWindow):
     def __init__(self,auto_files=None):
         super().__init__(); self.setWindowTitle("WC3 to SC2 Converter"); self.resize(1280,850); self.setMinimumSize(960,620)
         self.jobs:Dict[str,ModelJob]={}; self._items:Dict[str,QTreeWidgetItem]={}
         self.settings=QSettings("wc3toSC2","Converter"); self.worker=None; self.worker_thread=None
-        self._settings_widget=None; self._settings_loading=False; self._settings_inserted=False
-        self._load_all_settings(); self._setup_theme(); self._setup_ui(); self._start_settings_cache()
+        self._settings_widget=None
+        self._load_all_settings(); self._setup_theme(); self._setup_ui()
         self._restore_session(); self._check_updates()
         if auto_files:
             for f in auto_files:
@@ -144,42 +137,24 @@ class MainWindow(QMainWindow):
 
     def _setup_ui(self):
         c=QWidget(); self.setCentralWidget(c); l=QVBoxLayout(c); l.setContentsMargins(10,10,10,10)
-        self.tabs=QTabWidget(); self.tabs.setStyleSheet("QTabWidget::pane{border:1px solid #3b4261;border-radius:8px}")
+        self.tabs=QTabWidget()
         self.tabs.addTab(self._convert_tab(),"Convert")
-        self.tabs.addTab(QLabel(""),"Settings")
+        self.tabs.addTab(QLabel("<div style='color:#565f89;font-size:14px;padding:40px;text-align:center'>Click to load settings</div>"),"Settings")
         self.tabs.addTab(self._about_tab(),"About")
         self.tabs.currentChanged.connect(self._on_tab_change)
         l.addWidget(self.tabs); self.statusBar().showMessage("Ready")
         QShortcut(QKeySequence("Delete"),self,self._remove_selected)
         QShortcut(QKeySequence("Return"),self,self._start)
 
-    def _swap_tab(self,idx,widget,label):
-        self.tabs.blockSignals(True)
-        self.tabs.removeTab(idx)
-        self.tabs.insertTab(idx,widget,label)
-        self.tabs.blockSignals(False)
-        self.tabs.setCurrentIndex(idx)
-
-    def _start_settings_cache(self):
-        self._settings_loading=True
-        self._sb=SettingsBuilder(self); self._sb_thread=QThread()
-        self._sb.moveToThread(self._sb_thread); self._sb.ready.connect(self._on_settings_ready)
-        self._sb_thread.started.connect(self._sb.build)
-        self._sb_thread.finished.connect(self._sb_thread.deleteLater)
-        self._sb_thread.start()
-
-    def _on_settings_ready(self,w):
-        self._settings_widget=w; self._settings_loading=False; self._sb_thread.quit()
-        if self.tabs.currentIndex()==1 and not self._settings_inserted:
-            self._swap_tab(1,w,"Settings"); self._settings_inserted=True
-
     def _on_tab_change(self,idx):
-        if idx==1 and not self._settings_inserted:
-            if self._settings_widget:
-                self._swap_tab(1,self._settings_widget,"Settings"); self._settings_inserted=True
-            elif self._settings_loading:
-                lb=QLabel("<div style='color:#e0af68;font-size:16px;padding:40px;text-align:center'>Loading settings...</div>")
-                self._swap_tab(1,lb,"Settings")
+        if idx==1 and self._settings_widget is None:
+            # Build settings on main thread (Qt widgets MUST be created on main thread)
+            w=self._build_settings()
+            self._settings_widget=w
+            self.tabs.blockSignals(True)
+            self.tabs.removeTab(1)
+            self.tabs.insertTab(1,w,"Settings")
+            self.tabs.blockSignals(False)
 
     def _convert_tab(self):
         tab=QWidget(); sp=QSplitter(Qt.Horizontal)
@@ -254,7 +229,7 @@ class MainWindow(QMainWindow):
         t=QWidget(); l=QVBoxLayout(t); l.setAlignment(Qt.AlignCenter); l.setSpacing(8)
         l.addWidget(QLabel("<div style='font-size:28px;color:#7aa2f7;font-weight:bold'>WC3 to SC2</div>"))
         l.addWidget(QLabel("<div style='font-size:18px;color:#e0af68'>Model Converter</div>"))
-        l.addWidget(QLabel("<div style='color:#a9b1d6;margin-top:12px'>Version 3.4</div>"))
+        l.addWidget(QLabel("<div style='color:#a9b1d6;margin-top:12px'>Version 3.5</div>"))
         l.addWidget(QLabel("<div style='color:#565f89;margin-top:6px'>Convert Warcraft 3 models to StarCraft 2</div>"))
         l.addWidget(QLabel("<div style='margin-top:20px'><a href='https://github.com/RogerRoger29/wc3-to-sc2-converter' style='color:#7aa2f7'>github.com/RogerRoger29/wc3-to-sc2-converter</a></div>"))
         l.addWidget(QLabel("<div style='color:#565f89;margin-top:20px;font-size:11px'>Powered by m3studio (Solstice245) | MIT License</div>"))
@@ -284,8 +259,11 @@ class MainWindow(QMainWindow):
         self._vis(); self._save_session(); self._update_title()
         def _bg_parse():
             try:
-                md=mdxlib.parse(p); j.mdx_data=md
-                j.texture_count=len(md.get("textures",[])); j.animation_count=len(md.get("sequences",[]))
+                md=mdxlib.parse(p)
+                with j._lock:
+                    j.mdx_data=md
+                    j.texture_count=len(md.get("textures",[]))
+                    j.animation_count=len(md.get("sequences",[]))
                 self._log("INFO",f"  Parsed {n}: {j.texture_count} textures, {j.animation_count} anims")
             except Exception as e: self._log("ERROR",f"Parse failed for {n}: {e}")
         threading.Thread(target=_bg_parse,daemon=True).start()
@@ -319,10 +297,13 @@ class MainWindow(QMainWindow):
         if not j: return
         if j.preview_path and os.path.exists(j.preview_path):
             self.preview_lbl.setPixmap(QPixmap(j.preview_path).scaled(480,480,Qt.KeepAspectRatio,Qt.SmoothTransformation))
-        elif j.mdx_data:
-            self.preview_lbl.setText(f"<div style='padding:24px'><div style='font-size:18px;color:#e0af68;font-weight:bold'>{j.model_name}</div><div style='color:#c0caf5;margin:8px 0'>{j.texture_count} textures &bull; {j.animation_count} animations</div><div style='color:#a9b1d6'>Scale: {j.scale} &bull; Status: {j.status.title()}</div></div>")
         else:
-            self.preview_lbl.setText(f"<div style='padding:24px'><div style='font-size:18px;color:#e0af68;font-weight:bold'>{j.model_name}</div><div style='color:#a9b1d6;margin:8px 0'>Parsing model data...</div></div>")
+            with j._lock:
+                tc=j.texture_count; ac=j.animation_count; has_data=j.mdx_data is not None
+            if has_data:
+                self.preview_lbl.setText(f"<div style='padding:24px'><div style='font-size:18px;color:#e0af68;font-weight:bold'>{j.model_name}</div><div style='color:#c0caf5;margin:8px 0'>{tc} textures &bull; {ac} animations</div><div style='color:#a9b1d6'>Scale: {j.scale} &bull; Status: {j.status.title()}</div></div>")
+            else:
+                self.preview_lbl.setText(f"<div style='padding:24px'><div style='font-size:18px;color:#e0af68;font-weight:bold'>{j.model_name}</div><div style='color:#a9b1d6;margin:8px 0'>Parsing model data...</div></div>")
 
     def _remove_selected(self):
         removed=0
@@ -365,8 +346,11 @@ class MainWindow(QMainWindow):
         if not q: self._done(); return
         j=q[0]; j.start_time=time.time(); j.status="checking"; self._upd(j); self._log("INFO","Starting: "+j.model_name); self.statusBar().showMessage(f"Converting {j.model_name}..."); self._update_title()
         waited=0
-        while j.mdx_data is None and waited<30: time.sleep(0.1); waited+=0.1
-        if j.mdx_data is None: self._log("ERROR","Parse incomplete"); j.status="failed"; self._upd(j); self._next(); return
+        while True:
+            with j._lock:
+                if j.mdx_data is not None: break
+            if waited>=30: self._log("ERROR","Parse incomplete"); j.status="failed"; self._upd(j); self._next(); return
+            time.sleep(0.1); waited+=0.1
         md=j.mdx_data
         if self._auto_scale: s,c=discovery.estimate_scale(md); j.scale=s; self._log("INFO",f"Scale: {s} ({c})")
         od=self._od or os.path.join(os.path.dirname(j.mdx_path),"out"); os.makedirs(od,exist_ok=True)

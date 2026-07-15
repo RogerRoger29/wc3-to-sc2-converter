@@ -9,12 +9,14 @@ BLP2 (the World of Warcraft format) is detected and rejected — this tool targe
 
 No external deps beyond Pillow + numpy.
 """
+from __future__ import annotations
 import struct, io
+from typing import Dict
 import numpy as np
 from PIL import Image
 
 
-def _read_header(d):
+def _read_header(d: bytes) -> Dict[str, int | bytes]:
     magic = d[:4]
     if magic == b"BLP2":
         raise ValueError("BLP2 (WoW) is not supported; this tool handles WC3 BLP1 textures")
@@ -27,7 +29,7 @@ def _read_header(d):
                 pic_type=pic_type, mip_offsets=mip_offsets, mip_sizes=mip_sizes)
 
 
-def _decode_jpeg(d, h):
+def _decode_jpeg(d: bytes, h: Dict[str, int | bytes]) -> np.ndarray:
     """JPEG-content BLP1: shared header at 156 (len prefix) + mip0 body; pixels are BGRA."""
     jpeg_header_size = struct.unpack_from("<I", d, 156)[0]
     header = d[160:160 + jpeg_header_size]
@@ -44,7 +46,7 @@ def _decode_jpeg(d, h):
     return np.dstack([rgb, a]).astype(np.uint8)
 
 
-def _decode_paletted(d, h):
+def _decode_paletted(d: bytes, h: Dict[str, int | bytes]) -> np.ndarray:
     """Palettized BLP1: 256 BGRA palette at offset 156, then indexed pixels at mip0, then alpha plane."""
     w, ht = h["width"], h["height"]
     pal = np.frombuffer(d, np.uint8, 256 * 4, 156).reshape(256, 4)  # BGRA
@@ -62,7 +64,7 @@ def _decode_paletted(d, h):
     return np.dstack([rgb, a]).astype(np.uint8)
 
 
-def decode_blp(path):
+def decode_blp(path: str) -> Image.Image:
     """Decode a .blp file to a PIL RGBA Image (mip 0)."""
     d = open(path, "rb").read()
     h = _read_header(d)

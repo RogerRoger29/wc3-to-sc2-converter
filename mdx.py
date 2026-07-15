@@ -11,47 +11,49 @@ Pure-Python, no Blender dependency. Run as CLI to dump JSON + a summary.
 WC3 coordinate system: right-handed, Z up, 1 unit ~= 1 game-world unit. Angles/quats (x,y,z,w).
 Animation track key 'time' is in MILLISECONDS (matches SEQS frame ranges).
 """
+from __future__ import annotations
 import struct, sys, json
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 INTERP = {0: "none", 1: "linear", 2: "hermite", 3: "bezier"}
 FILTER = {0: "None", 1: "Transparent", 2: "Blend", 3: "Additive", 4: "AddAlpha", 5: "Modulate", 6: "Modulate2x"}
 
 
 class Reader:
-    def __init__(self, data, pos=0):
+    def __init__(self, data: bytes, pos: int = 0) -> None:
         self.d = data
         self.p = pos
 
-    def u8(self):
+    def u8(self) -> int:
         v = self.d[self.p]; self.p += 1; return v
 
-    def u16(self):
+    def u16(self) -> int:
         v = struct.unpack_from("<H", self.d, self.p)[0]; self.p += 2; return v
 
-    def u32(self):
+    def u32(self) -> int:
         v = struct.unpack_from("<I", self.d, self.p)[0]; self.p += 4; return v
 
-    def i32(self):
+    def i32(self) -> int:
         v = struct.unpack_from("<i", self.d, self.p)[0]; self.p += 4; return v
 
-    def f32(self):
+    def f32(self) -> float:
         v = struct.unpack_from("<f", self.d, self.p)[0]; self.p += 4; return round(v, 6)
 
-    def vec(self, n):
+    def vec(self, n: int) -> List[float]:
         return [self.f32() for _ in range(n)]
 
-    def tag(self):
+    def tag(self) -> str:
         t = self.d[self.p:self.p + 4]; self.p += 4; return t.decode("ascii", "replace")
 
-    def cstr(self, n):
+    def cstr(self, n: int) -> str:
         b = self.d[self.p:self.p + n]; self.p += n; return b.split(b"\x00")[0].decode("ascii", "replace")
 
-    def peek_tag(self):
+    def peek_tag(self) -> str:
         return self.d[self.p:self.p + 4].decode("ascii", "replace")
 
 
 # --- animation track block: optional KG** sub-chunk inside a node -------------
-def read_track(r, want_tags, value_reader):
+def read_track(r: Reader, want_tags: Tuple[str, ...], value_reader: Callable[[Reader], Any]) -> Optional[Dict[str, Any]]:
     """If the next tag is one of want_tags, read a keyframe track. Returns dict or None.
     Leaves r.p unchanged if no matching tag."""
     if r.p + 4 > len(r.d):
@@ -75,7 +77,7 @@ def read_track(r, want_tags, value_reader):
     return {"tag": t, "interp": INTERP.get(interp, interp), "globalSeq": gseq, "keys": keys}
 
 
-def read_node(r):
+def read_node(r: Reader) -> Dict[str, Any]:
     """Generic MDLX node header (shared by BONE/LITE/HELP/ATCH/PREM/PRE2/RIBB/EVTS/CAMS-attached/CLID-ish).
     Returns (node_dict, end_pos). Node has inclusive size as first u32."""
     start = r.p
@@ -106,7 +108,7 @@ def read_node(r):
 PE2_FILTER = {0: "blend", 1: "additive", 2: "modulate", 3: "modulate2x", 4: "alphakey"}
 PE2_HEADTAIL = {0: "head", 1: "tail", 2: "both"}
 
-def parse_pre2(data, off, size):
+def parse_pre2(data: bytes, off: int, size: int) -> List[Dict[str, Any]]:
     """ParticleEmitter2 (WC3 v800).
 
     Layout per emitter:
@@ -180,7 +182,7 @@ def parse_pre2(data, off, size):
     return emitters
 
 
-def parse_geoa(data, off, size):
+def parse_geoa(data: bytes, off: int, size: int) -> List[Dict[str, Any]]:
     """GEOA geoset animations: per-geoset static + animated alpha (KGAO) and color (KGAC)."""
     end = off + size
     r = Reader(data, off)
@@ -206,7 +208,7 @@ def parse_geoa(data, off, size):
     return out
 
 
-def parse(path):
+def parse(path: str) -> Dict[str, Any]:
     data = open(path, "rb").read()
     assert data[:4] == b"MDLX", "not MDLX"
     r = Reader(data, 4)
@@ -427,7 +429,7 @@ def parse(path):
     return out
 
 
-def summarize(m):
+def summarize(m: Dict[str, Any]) -> str:
     L = []
     L.append("model=%s v=%s bounds_r=%.1f min=%s max=%s" % (
         m["model"].get("name"), m["model"].get("version"), m["model"].get("boundsRadius", 0),

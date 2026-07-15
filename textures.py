@@ -9,7 +9,9 @@ Per-texture options:
                  hard black border, and set alpha = luminance. This stops an additive sprite from
                  accumulating into a bright square; it fades to a round soft glow instead.
 """
+from __future__ import annotations
 import struct, io, os
+from typing import Tuple
 import numpy as np
 from PIL import Image
 
@@ -19,7 +21,7 @@ except ImportError:
     from .blp import decode_blp
 
 
-def _dxt5_blocks(img_rgba):
+def _dxt5_blocks(img_rgba: Image.Image) -> bytes:
     buf = io.BytesIO()
     img_rgba.save(buf, format="DDS", pixel_format="DXT5")
     data = buf.getvalue()
@@ -27,8 +29,8 @@ def _dxt5_blocks(img_rgba):
     return data[128:]
 
 
-def write_dds_dxt5_mipped(path, base_rgba):
-    """Write a DXT5 DDS with a full mip chain from a PIL RGBA image."""
+def write_dds_dxt5_mipped(path: str, base_rgba: Image.Image) -> int:
+    """Write a DXT5 DDS with a full mip chain from a PIL RGBA image. Returns mip level count."""
     w, h = base_rgba.size
     levels, lw, lh = [], w, h
     while True:
@@ -50,7 +52,7 @@ def write_dds_dxt5_mipped(path, base_rgba):
     return len(levels)
 
 
-def _radial_glow(h, w, sigma=0.30, cutoff=0.80):
+def _radial_glow(h: int, w: int, sigma: float = 0.30, cutoff: float = 0.80) -> np.ndarray:
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
     cy, cx = (h - 1) / 2.0, (w - 1) / 2.0
     r = np.sqrt(((xx - cx) / (w / 2.0)) ** 2 + ((yy - cy) / (h / 2.0)) ** 2)
@@ -59,14 +61,16 @@ def _radial_glow(h, w, sigma=0.30, cutoff=0.80):
     return g[..., None]
 
 
-def load_image(src):
+def load_image(src: str) -> Image.Image:
     """Load a BLP/PNG/TGA/etc. as a PIL RGBA image."""
     if src.lower().endswith(".blp"):
         return decode_blp(src)
     return Image.open(src).convert("RGBA")
 
 
-def convert_texture(src, out_path, alpha_invert=False, glow=False, glow_dim=0.7):
+def convert_texture(src: str, out_path: str, alpha_invert: bool = False,
+                    glow: bool = False, glow_dim: float = 0.7) -> Tuple[Tuple[int, int], int]:
+    """Convert a source texture to DDS DXT5. Returns ((width, height), mip_levels)."""
     img = load_image(src)
     arr = np.array(img).astype(np.float32)
     rgb, a = arr[..., :3], arr[..., 3]

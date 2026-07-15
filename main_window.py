@@ -1,5 +1,4 @@
 """WC3 -> SC2 Model Converter - PySide6 GUI Application.
-Double-click EXE, drag-drop .mdx, one-click convert.
 """
 from __future__ import annotations
 import os, sys, json, time, threading
@@ -13,9 +12,9 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QTreeWidget, QTreeWidgetItem, QPushButton, QLabel,
     QPlainTextEdit, QProgressBar, QFileDialog, QCheckBox, QLineEdit,
-    QGroupBox, QSplitter, QHeaderView, QStyleFactory, QScrollArea, QComboBox, QMenu, QFrame,
+    QGroupBox, QSplitter, QHeaderView, QStyleFactory, QScrollArea, QComboBox, QMenu, QFrame, QGraphicsOpacityEffect,
 )
-from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer, QSettings
+from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer, QSettings, QPropertyAnimation, QEasingCurve, QSize
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor, QPixmap, QPalette, QKeySequence, QShortcut
 
 import mdx as mdxlib, diagnostics, healer, discovery, fuzzy_anims, actor_gen, preview
@@ -24,34 +23,48 @@ import auto_updater, blender_manager
 SCRIPT_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
 
 STYLE = """
-QMainWindow{background:#1e1e2e} QPushButton{background:#45475a;color:#cdd6f4;border:1px solid #585b70;border-radius:6px;padding:7px 16px}
-QPushButton:hover{background:#585b70;border-color:#89b4fa} QPushButton:pressed{background:#313244}
-QPushButton:disabled{background:#313244;color:#6c7086}
-QPushButton#cvt{background:#a6e3a1;color:#1e1e2e;font-weight:bold} QPushButton#cvt:hover{background:#94e2d5}
-QPushButton#cvt:disabled{background:#45475a;color:#6c7086}
-QPushButton#setup{background:#f9e2af;color:#1e1e2e;font-weight:bold;padding:8px} QPushButton#setup:hover{background:#fab387}
-QTreeWidget{border:1px solid #313244;border-radius:6px;outline:none}
-QTreeWidget::item{padding:4px 8px;min-height:24px} QTreeWidget::item:selected{background:#45475a}
-QTreeWidget::item:hover{background:#313244}
-QHeaderView::section{background:#313244;color:#a6adc8;border:none;padding:6px 8px;font-weight:bold}
-QProgressBar{border:1px solid #45475a;border-radius:4px;background:#313244;text-align:center;color:#cdd6f4}
-QProgressBar::chunk{background:#89b4fa;border-radius:3px}
-QTabWidget::pane{border:1px solid #313244} QTabBar::tab{padding:10px 24px;margin-right:2px}
-QTabBar::tab:selected{background:#45475a;color:#89b4fa} QTabBar::tab:hover{background:#313244}
-QGroupBox{font-weight:bold;border:1px solid #45475a;border-radius:8px;margin-top:14px;padding-top:18px;color:#a6adc8}
-QGroupBox::title{subcontrol-origin:margin;left:14px;padding:0 6px;color:#89b4fa}
-QLineEdit,QComboBox{background:#313244;border:1px solid #45475a;border-radius:4px;padding:6px 8px;color:#cdd6f4}
-QLineEdit:focus,QComboBox:hover{border-color:#89b4fa} QComboBox::drop-down{border:none}
-QCheckBox{color:#cdd6f4;spacing:8px} QCheckBox::indicator{width:16px;height:16px;border:1px solid #585b70;border-radius:3px;background:#313244}
-QCheckBox::indicator:checked{background:#89b4fa;border-color:#89b4fa}
-QScrollBar:vertical{background:#1e1e2e;width:10px;border-radius:5px}
-QScrollBar::handle:vertical{background:#45475a;border-radius:5px;min-height:30px}
-QScrollBar::handle:vertical:hover{background:#585b70}
+QMainWindow{background:#1a1b26}
+QPushButton{background:#3b4261;color:#c0caf5;border:1px solid #565f89;border-radius:8px;padding:8px 18px;font-size:12px}
+QPushButton:hover{background:#565f89;border-color:#7aa2f7}
+QPushButton:pressed{background:#24283b}
+QPushButton:disabled{background:#24283b;color:#565f89;border-color:#3b4261}
+QPushButton#cvt{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #7aa2f7,stop:1 #9ece6a);color:#1a1b26;font-weight:bold;border:none;font-size:13px}
+QPushButton#cvt:hover{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #89b4fa,stop:1 #a6e3a1)}
+QPushButton#cvt:disabled{background:#3b4261;color:#565f89}
+QPushButton#setup{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #e0af68,stop:1 #f9e2af);color:#1a1b26;font-weight:bold;padding:10px;font-size:12px;border:none}
+QPushButton#setup:hover{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #fab387,stop:1 #ffe0b0)}
+QTreeWidget{border:1px solid #3b4261;border-radius:8px;outline:none;background:#24283b;alternate-background-color:#1f2335}
+QTreeWidget::item{padding:5px 10px;min-height:26px;border-bottom:1px solid #3b4261}
+QTreeWidget::item:selected{background:#3b4261;color:#c0caf5}
+QTreeWidget::item:hover{background:#2f3348}
+QHeaderView::section{background:#1f2335;color:#7aa2f7;border:none;padding:8px 10px;font-weight:bold;font-size:11px}
+QProgressBar{border:1px solid #3b4261;border-radius:6px;background:#1f2335;text-align:center;color:#c0caf5;height:18px;font-size:11px}
+QProgressBar::chunk{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #7aa2f7,stop:1 #9ece6a);border-radius:5px}
+QTabWidget::pane{border:1px solid #3b4261;border-radius:8px}
+QTabBar::tab{background:#1f2335;color:#565f89;padding:12px 28px;margin-right:3px;border-top-left-radius:8px;border-top-right-radius:8px;font-size:12px}
+QTabBar::tab:selected{background:#24283b;color:#7aa2f7;border-bottom:2px solid #e0af68}
+QTabBar::tab:hover{color:#c0caf5}
+QGroupBox{font-weight:bold;border:1px solid #3b4261;border-radius:10px;margin-top:16px;padding-top:20px;color:#a9b1d6}
+QGroupBox::title{subcontrol-origin:margin;left:16px;padding:0 8px;color:#e0af68;font-size:13px}
+QLineEdit,QComboBox{background:#1f2335;border:1px solid #3b4261;border-radius:6px;padding:8px 10px;color:#c0caf5;font-size:12px}
+QLineEdit:focus,QComboBox:hover{border-color:#7aa2f7}
+QComboBox::drop-down{border:none;width:24px}
+QComboBox QAbstractItemView{background:#24283b;color:#c0caf5;border:1px solid #3b4261;border-radius:6px;selection-background-color:#3b4261}
+QCheckBox{color:#c0caf5;spacing:10px;font-size:12px}
+QCheckBox::indicator{width:18px;height:18px;border:2px solid #565f89;border-radius:4px;background:#1f2335}
+QCheckBox::indicator:checked{background:#7aa2f7;border-color:#7aa2f7}
+QScrollArea{border:none}
+QScrollBar:vertical{background:#1a1b26;width:8px;border-radius:4px;margin:2px}
+QScrollBar::handle:vertical{background:#3b4261;border-radius:4px;min-height:30px}
+QScrollBar::handle:vertical:hover{background:#565f89}
 QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0}
-QSplitter::handle{background:#313244;width:2px}
-QToolTip{background:#45475a;color:#cdd6f4;border:1px solid #585b70;border-radius:4px;padding:4px 8px}
-QMenu{background:#313244;color:#cdd6f4;border:1px solid #45475a;padding:4px}
-QMenu::item{padding:6px 24px} QMenu::item:selected{background:#45475a}
+QSplitter::handle{background:#3b4261;width:3px}
+QToolTip{background:#24283b;color:#c0caf5;border:1px solid #565f89;border-radius:6px;padding:6px 10px;font-size:11px}
+QMenu{background:#24283b;color:#c0caf5;border:1px solid #3b4261;border-radius:8px;padding:6px}
+QMenu::item{padding:8px 28px;border-radius:4px}
+QMenu::item:selected{background:#3b4261}
+QMenu::separator{height:1px;background:#3b4261;margin:4px 8px}
+QLabel#preview{background:#1f2335;border:1px solid #3b4261;border-radius:10px}
 """
 
 @dataclass
@@ -68,6 +81,7 @@ class ModelJob:
 class ConversionSignals(QObject):
     progress=Signal(str,int); log_message=Signal(str,str); status_change=Signal(str,str)
     job_done=Signal(str,bool,str); report_ready=Signal(str,str)
+    settings_ready=Signal(object)
 
 class ConversionWorker(QObject):
     def __init__(self,blender=""): super().__init__(); self.signals=ConversionSignals(); self._blender=blender; self._cancelled=False
@@ -99,12 +113,20 @@ class ConversionWorker(QObject):
             self.signals.progress.emit(job.mdx_path,100); job.status="done"; job.output_path=build_cfg["out"]; self.signals.job_done.emit(job.mdx_path,True,build_cfg["out"])
         except Exception as ex: self.signals.log_message.emit("ERROR",str(ex)); job.status="failed"; self.signals.job_done.emit(job.mdx_path,False,"")
 
+class SettingsBuilder(QObject):
+    ready=Signal(object)
+    def __init__(self,main_window): super().__init__(); self.mw=main_window
+    def build(self):
+        w=self.mw._build_settings()
+        self.ready.emit(w)
+
 class MainWindow(QMainWindow):
     def __init__(self,auto_files=None):
         super().__init__(); self.setWindowTitle("WC3 to SC2 Converter"); self.resize(1280,850); self.setMinimumSize(960,620)
         self.jobs:Dict[str,ModelJob]={}; self.settings=QSettings("wc3toSC2","Converter"); self.worker=None; self.worker_thread=None
-        self._settings_widget=None
-        self._load_all_settings(); self._setup_theme(); self._setup_ui(); self._restore_session(); self._check_updates()
+        self._settings_widget=None; self._settings_loading=False; self._pulse_timer=None
+        self._load_all_settings(); self._setup_theme(); self._setup_ui(); self._start_settings_cache()
+        self._restore_session(); self._check_updates()
         if auto_files:
             for f in auto_files:
                 if os.path.isdir(f): self._add_folder_path(f)
@@ -113,15 +135,15 @@ class MainWindow(QMainWindow):
 
     def _setup_theme(self):
         app=QApplication.instance(); app.setStyle(QStyleFactory.create("Fusion")); app.setStyleSheet(STYLE)
-        p=QPalette(); p.setColor(QPalette.Window,QColor(30,30,46)); p.setColor(QPalette.WindowText,QColor(205,214,244))
-        p.setColor(QPalette.Base,QColor(24,24,37)); p.setColor(QPalette.Text,QColor(205,214,244))
-        p.setColor(QPalette.Button,QColor(49,50,68)); p.setColor(QPalette.ButtonText,QColor(205,214,244))
-        p.setColor(QPalette.Highlight,QColor(137,180,250)); p.setColor(QPalette.HighlightedText,QColor(30,30,46))
+        p=QPalette(); p.setColor(QPalette.Window,QColor(26,27,38)); p.setColor(QPalette.WindowText,QColor(192,202,245))
+        p.setColor(QPalette.Base,QColor(31,35,53)); p.setColor(QPalette.Text,QColor(192,202,245))
+        p.setColor(QPalette.Button,QColor(59,66,97)); p.setColor(QPalette.ButtonText,QColor(192,202,245))
+        p.setColor(QPalette.Highlight,QColor(122,162,247)); p.setColor(QPalette.HighlightedText,QColor(26,27,38))
         app.setPalette(p)
 
     def _setup_ui(self):
-        c=QWidget(); self.setCentralWidget(c); l=QVBoxLayout(c); l.setContentsMargins(8,8,8,8)
-        self.tabs=QTabWidget()
+        c=QWidget(); self.setCentralWidget(c); l=QVBoxLayout(c); l.setContentsMargins(10,10,10,10)
+        self.tabs=QTabWidget(); self.tabs.setStyleSheet("QTabWidget::pane{border:1px solid #3b4261;border-radius:8px}")
         self.tabs.addTab(self._convert_tab(),"Convert")
         self.tabs.addTab(QLabel(""),"Settings")
         self.tabs.addTab(self._about_tab(),"About")
@@ -130,22 +152,42 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Delete"),self,self._remove_selected)
         QShortcut(QKeySequence("Return"),self,self._start)
 
-    def _on_tab_change(self,idx):
-        if idx==1 and self._settings_widget is None:
+    def _start_settings_cache(self):
+        self._settings_loading=True
+        self._sb=SettingsBuilder(self); self._sb_thread=QThread()
+        self._sb.moveToThread(self._sb_thread); self._sb.ready.connect(self._on_settings_ready)
+        self._sb_thread.started.connect(self._sb.build)
+        self._sb_thread.start()
+
+    def _on_settings_ready(self,w):
+        self._settings_widget=w; self._settings_loading=False
+        if self.tabs.currentIndex()==1:
             self.tabs.widget(1).deleteLater()
-            self._settings_widget=self._build_settings()
-            self.tabs.insertTab(1,self._settings_widget,"Settings")
-            self.tabs.setCurrentIndex(1)
+            self.tabs.insertTab(1,w,"Settings"); self.tabs.setCurrentIndex(1)
+
+    def _on_tab_change(self,idx):
+        if idx==1:
+            if self._settings_widget:
+                self.tabs.widget(1).deleteLater()
+                self.tabs.insertTab(1,self._settings_widget,"Settings"); self.tabs.setCurrentIndex(1)
+            elif self._settings_loading:
+                self.tabs.widget(1).deleteLater()
+                lb=QLabel("<div style='color:#e0af68;font-size:16px;padding:40px;text-align:center'>Loading settings...</div>")
+                self.tabs.insertTab(1,lb,"Settings"); self.tabs.setCurrentIndex(1)
 
     def _convert_tab(self):
         tab=QWidget(); sp=QSplitter(Qt.Horizontal)
-        left=QWidget(); ll=QVBoxLayout(left); ll.setContentsMargins(0,0,6,0)
+        left=QWidget(); ll=QVBoxLayout(left); ll.setContentsMargins(0,0,8,0)
         self.welcome=QFrame(); wl=QVBoxLayout(self.welcome)
-        wl.addStretch(); wl.addWidget(QLabel("<div style='text-align:center'><h2 style='color:#89b4fa;margin:0'>Drop .mdx files here</h2><p style='color:#a6adc8;margin:8px 0'>or use the buttons below</p></div>")); wl.addStretch()
-        self.welcome.setStyleSheet("background:#1e1e2e;border:2px dashed #45475a;border-radius:12px;min-height:150px")
+        wl.addStretch()
+        icon=QLabel("<div style='text-align:center;font-size:48px;color:#7aa2f7'>WC3 to SC2</div>")
+        wl.addWidget(icon)
+        wl.addWidget(QLabel("<div style='text-align:center;color:#a9b1d6;margin:12px 0'>Drop <b style='color:#e0af68'>.mdx</b> files here to begin</div>"))
+        wl.addWidget(QLabel("<div style='text-align:center;color:#565f89;font-size:11px'>or use the buttons below to add models</div>")); wl.addStretch()
+        self.welcome.setStyleSheet("background:#24283b;border:2px dashed #3b4261;border-radius:14px;min-height:160px")
         self.welcome.setVisible(True); ll.addWidget(self.welcome)
         self.queue_tree=QTreeWidget(); self.queue_tree.setHeaderLabels(["Model","Status","Progress","Warnings"])
-        self.queue_tree.setAlternatingRowColors(True); self.queue_tree.setDragDropMode(self.queue_tree.DragDropMode.DropOnly); self.queue_tree.setAcceptDrops(True)
+        self.queue_tree.setDragDropMode(self.queue_tree.DragDropMode.DropOnly); self.queue_tree.setAcceptDrops(True)
         self.queue_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.queue_tree.customContextMenuRequested.connect(self._context_menu)
         self.queue_tree.dragEnterEvent=lambda e: e.acceptProposedAction() if e.mimeData().hasUrls() else None
@@ -154,25 +196,24 @@ class MainWindow(QMainWindow):
             self.queue_tree.header().setSectionResizeMode(i,c)
         self.queue_tree.setVisible(False); ll.addWidget(self.queue_tree)
         br=QHBoxLayout()
-        add=QPushButton("+ Add Models"); add.setToolTip("Select .mdx files"); add.clicked.connect(self._add_models); br.addWidget(add)
-        fd=QPushButton("Add Folder"); fd.setToolTip("Add all .mdx from a folder"); fd.clicked.connect(self._add_folder); br.addWidget(fd)
-        rm=QPushButton("Remove"); rm.setToolTip("Remove selected (Delete)"); rm.clicked.connect(self._remove_selected); br.addWidget(rm)
-        cl=QPushButton("Clear"); cl.setToolTip("Clear completed"); cl.clicked.connect(self._clear_done); br.addWidget(cl); br.addStretch()
-        self.cvt_btn=QPushButton("Convert All"); self.cvt_btn.setObjectName("cvt"); self.cvt_btn.setToolTip("Start conversion (Enter)")
+        add=QPushButton("+ Add Models"); add.setToolTip("Select .mdx files to convert"); add.clicked.connect(self._add_models); br.addWidget(add)
+        fd=QPushButton("Add Folder"); fd.setToolTip("Add all .mdx files from a folder"); fd.clicked.connect(self._add_folder); br.addWidget(fd)
+        rm=QPushButton("Remove"); rm.setToolTip("Remove selected models (Delete key)"); rm.clicked.connect(self._remove_selected); br.addWidget(rm)
+        cl=QPushButton("Clear"); cl.setToolTip("Clear completed models from the list"); cl.clicked.connect(self._clear_done); br.addWidget(cl); br.addStretch()
+        self.cvt_btn=QPushButton("Convert All"); self.cvt_btn.setObjectName("cvt"); self.cvt_btn.setToolTip("Start converting all ready models (Enter)")
         self.cvt_btn.clicked.connect(self._start); br.addWidget(self.cvt_btn)
-        self.stp_btn=QPushButton("Stop"); self.stp_btn.setEnabled(False); self.stp_btn.setToolTip("Stop after current model"); self.stp_btn.clicked.connect(self._cancel); br.addWidget(self.stp_btn); ll.addLayout(br); sp.addWidget(left)
-        right=QWidget(); rl=QVBoxLayout(right); rl.setContentsMargins(6,0,0,0)
-        self.preview_lbl=QLabel(); self.preview_lbl.setAlignment(Qt.AlignCenter); self.preview_lbl.setMinimumHeight(200)
-        self.preview_lbl.setStyleSheet("background:#1e1e2e;border:1px solid #313244;border-radius:8px")
-        self.preview_lbl.setText("<span style='color:#6c7086'>Select a model</span>"); rl.addWidget(self.preview_lbl,2)
+        self.stp_btn=QPushButton("Stop"); self.stp_btn.setEnabled(False); self.stp_btn.setToolTip("Stop after the current model finishes"); self.stp_btn.clicked.connect(self._cancel); br.addWidget(self.stp_btn); ll.addLayout(br); sp.addWidget(left)
+        right=QWidget(); rl=QVBoxLayout(right); rl.setContentsMargins(8,0,0,0)
+        self.preview_lbl=QLabel(); self.preview_lbl.setObjectName("preview"); self.preview_lbl.setAlignment(Qt.AlignCenter); self.preview_lbl.setMinimumHeight(200)
+        self.preview_lbl.setText("<div style='padding:30px'><span style='color:#565f89;font-size:14px'>Model details appear here</span></div>"); rl.addWidget(self.preview_lbl,2)
         self.log_view=QPlainTextEdit(); self.log_view.setReadOnly(True); self.log_view.setFont(QFont("Consolas",10)); self.log_view.setMaximumBlockCount(5000)
-        self.log_view.setStyleSheet("border:1px solid #313244;border-radius:8px;padding:4px"); rl.addWidget(self.log_view,3)
-        self.ov_prog=QProgressBar(); self.ov_prog.setVisible(False); self.ov_prog.setTextVisible(True); self.ov_prog.setFormat("%v/%m"); rl.addWidget(self.ov_prog)
+        self.log_view.setStyleSheet("QPlainTextEdit{background:#1f2335;border:1px solid #3b4261;border-radius:10px;padding:6px}"); rl.addWidget(self.log_view,3)
+        self.ov_prog=QProgressBar(); self.ov_prog.setVisible(False); self.ov_prog.setTextVisible(True); self.ov_prog.setFormat("%v of %m models"); rl.addWidget(self.ov_prog)
         sp.addWidget(right); sp.setSizes([550,650])
         ml=QVBoxLayout(tab); ml.addWidget(sp); return tab
 
     def _build_settings(self):
-        sc=QScrollArea(); sc.setWidgetResizable(True); w=QWidget(); lo=QVBoxLayout(w)
+        sc=QScrollArea(); sc.setWidgetResizable(True); w=QWidget(); lo=QVBoxLayout(w); lo.setSpacing(8)
         gb=QGroupBox("Blender"); gl=QVBoxLayout(gb)
         hb=QHBoxLayout(); self._be=QLineEdit(self._bp); self._be.setPlaceholderText("Auto-detect"); hb.addWidget(QLabel("Path:")); hb.addWidget(self._be)
         a=QPushButton("Auto-Detect"); a.clicked.connect(self._auto_blender); hb.addWidget(a)
@@ -180,37 +221,37 @@ class MainWindow(QMainWindow):
         self._oc_btn=QPushButton("One-Click Setup"); self._oc_btn.setObjectName("setup"); self._oc_btn.clicked.connect(self._oneclick); gl.addWidget(self._oc_btn)
         self._bs=QLabel("Not checked"); gl.addWidget(self._bs); lo.addWidget(gb)
         gb2=QGroupBox("Scale & Output"); gl2=QVBoxLayout(gb2)
-        self._se=self._labeled_edit("Scale:",str(self._scale),gl2)
-        self._pe=self._labeled_edit("Particle rate:",str(self._prate),gl2)
-        self._pse=self._labeled_edit("Particle size:",str(self._psize),gl2)
-        self._oe=self._labeled_edit("Output dir:",self._od,gl2); lo.addWidget(gb2)
+        self._se=self._le("Scale:",str(self._scale),gl2); self._pe=self._le("Particle rate:",str(self._prate),gl2)
+        self._pse=self._le("Particle size:",str(self._psize),gl2); self._oe=self._le("Output dir:",self._od,gl2); lo.addWidget(gb2)
         gb3=QGroupBox("Animation"); gl3=QVBoxLayout(gb3)
-        self._fps_cb=self._labeled_combo("FPS mode:",["Auto-detect","30","60","15","10"],self._fps_mode,gl3)
+        self._fps_cb=self._cb("FPS mode:",["Auto-detect","30","60","15","10"],self._fps_mode,gl3)
         self._squad_cb=QCheckBox("Squad quaternion interpolation"); self._squad_cb.setChecked(self._squad); gl3.addWidget(self._squad_cb)
         self._kf_cb=QCheckBox("Keyframe reduction"); self._kf_cb.setChecked(self._kf_reduce); gl3.addWidget(self._kf_cb); lo.addWidget(gb3)
         gb4=QGroupBox("Mesh & Team Color"); gl4=QVBoxLayout(gb4)
-        self._lod_cb=self._labeled_combo("LOD:",["None","LOD1 (50%)","LOD1+LOD2"],str(self._lod_level),gl4)
-        self._tc_cb=self._labeled_combo("Team Color:",["TEAMEMIS","UV Mask","Off"],str(self._tc_mode),gl4); lo.addWidget(gb4)
+        self._lod_cb=self._cb("LOD:",["None","LOD1 (50%)","LOD1+LOD2"],str(self._lod_level),gl4)
+        self._tc_cb=self._cb("Team Color:",["TEAMEMIS","UV Mask","Off"],str(self._tc_mode),gl4); lo.addWidget(gb4)
         gb6=QGroupBox("Pipeline"); gl6=QVBoxLayout(gb6)
         for attr,label in [("_mt_cb","Multi-threaded textures"),("_cache_cb","MDX parse cache"),("_aa_cb","Auto-detect inverted alpha"),
                            ("_as_cb","Auto-estimate scale"),("_fa_cb","Fuzzy-match animations"),("_ax_cb","Generate actor XML"),("_gr_cb","Generate HTML report")]:
             cb=QCheckBox(label); cb.setChecked(getattr(self,attr.replace("_cb",""),True)); setattr(self,attr,cb); gl6.addWidget(cb)
         self._nm_cb=QCheckBox("Generate normal maps"); self._nm_cb.setChecked(self._normals); gl6.addWidget(self._nm_cb)
-        self._ns_e=self._labeled_edit("Normal strength:",str(self._nm_strength),gl6); lo.addWidget(gb6)
+        self._ns_e=self._le("Normal strength:",str(self._nm_strength),gl6); lo.addWidget(gb6)
         sv=QPushButton("Save Settings"); sv.clicked.connect(self._save_all); lo.addWidget(sv); lo.addStretch()
         sc.setWidget(w); return sc
 
-    def _labeled_edit(self,label,default,layout):
+    def _le(self,label,default,layout):
         hd=QHBoxLayout(); hd.addWidget(QLabel(label)); e=QLineEdit(default); hd.addWidget(e); layout.addLayout(hd); return e
-
-    def _labeled_combo(self,label,items,default,layout):
+    def _cb(self,label,items,default,layout):
         hd=QHBoxLayout(); hd.addWidget(QLabel(label)); cb=QComboBox(); cb.addItems(items); cb.setCurrentText(default); hd.addWidget(cb); layout.addLayout(hd); return cb
 
     def _about_tab(self):
-        t=QWidget(); l=QVBoxLayout(t); l.setAlignment(Qt.AlignCenter)
-        l.addWidget(QLabel("<h1 style='color:#89b4fa'>WC3 to SC2 Converter</h1>"))
-        l.addWidget(QLabel("<p style='color:#a6adc8'>Version 3.3</p>"))
-        l.addWidget(QLabel("<p><a href='https://github.com/RogerRoger29/wc3-to-sc2-converter' style='color:#89b4fa'>GitHub</a></p>"))
+        t=QWidget(); l=QVBoxLayout(t); l.setAlignment(Qt.AlignCenter); l.setSpacing(8)
+        l.addWidget(QLabel("<div style='font-size:28px;color:#7aa2f7;font-weight:bold'>WC3 to SC2</div>"))
+        l.addWidget(QLabel("<div style='font-size:18px;color:#e0af68'>Model Converter</div>"))
+        l.addWidget(QLabel("<div style='color:#a9b1d6;margin-top:12px'>Version 3.4</div>"))
+        l.addWidget(QLabel("<div style='color:#565f89;margin-top:6px'>Convert Warcraft 3 models to StarCraft 2</div>"))
+        l.addWidget(QLabel("<div style='margin-top:20px'><a href='https://github.com/RogerRoger29/wc3-to-sc2-converter' style='color:#7aa2f7'>github.com/RogerRoger29/wc3-to-sc2-converter</a></div>"))
+        l.addWidget(QLabel("<div style='color:#565f89;margin-top:20px;font-size:11px'>Powered by m3studio (Solstice245) | MIT License</div>"))
         return t
 
     def _drop(self,e):
@@ -261,11 +302,18 @@ class MainWindow(QMainWindow):
 
     def _vis(self):
         h=self.queue_tree.topLevelItemCount()>0; self.welcome.setVisible(not h); self.queue_tree.setVisible(h)
+        if h and not self._pulse_timer:
+            self._pulse_timer=QTimer(self); self._pulse_timer.timeout.connect(self._pulse_convert_btn); self._pulse_timer.start(2000)
+
+    def _pulse_convert_btn(self):
+        if not any(j.status=="ready" for j in self.jobs.values()): return
+        self.cvt_btn.setStyleSheet(self.cvt_btn.styleSheet().replace("padding:8px 28px","padding:8px 32px"))
+        QTimer.singleShot(300,lambda: self.cvt_btn.setStyleSheet(self.cvt_btn.styleSheet().replace("padding:8px 32px","padding:8px 28px")))
 
     def _update_title(self):
         q=sum(1 for j in self.jobs.values() if j.status=="ready"); d=sum(1 for j in self.jobs.values() if j.status=="done")
         f=sum(1 for j in self.jobs.values() if j.status=="failed")
-        self.setWindowTitle(f"WC3 to SC2 [Q:{q} D:{d}"+(f" F:{f}]" if f else "]"))
+        self.setWindowTitle(f"WC3 to SC2   [ Ready: {q}   Done: {d}"+(f"   Failed: {f}]" if f else "]"))
 
     def _on_select(self):
         its=self.queue_tree.selectedItems()
@@ -275,9 +323,9 @@ class MainWindow(QMainWindow):
         if j.preview_path and os.path.exists(j.preview_path):
             self.preview_lbl.setPixmap(QPixmap(j.preview_path).scaled(480,480,Qt.KeepAspectRatio,Qt.SmoothTransformation))
         elif j.mdx_data:
-            self.preview_lbl.setText(f"<div style='padding:20px'><h3 style='color:#a6e3a1;margin:0'>{j.model_name}</h3><p style='color:#cdd6f4;margin:4px 0'>{j.texture_count} textures &bull; {j.animation_count} animations</p><p style='color:#a6adc8;margin:4px 0'>Scale: {j.scale} &bull; Status: {j.status.title()}</p></div>")
+            self.preview_lbl.setText(f"<div style='padding:24px'><div style='font-size:18px;color:#e0af68;font-weight:bold'>{j.model_name}</div><div style='color:#c0caf5;margin:8px 0'>{j.texture_count} textures &bull; {j.animation_count} animations</div><div style='color:#a9b1d6'>Scale: {j.scale} &bull; Status: {j.status.title()}</div></div>")
         else:
-            self.preview_lbl.setText(f"<div style='padding:20px'><h3 style='color:#f9e2af;margin:0'>{j.model_name}</h3><p style='color:#a6adc8;margin:4px 0'>Parsing model data...</p></div>")
+            self.preview_lbl.setText(f"<div style='padding:24px'><div style='font-size:18px;color:#e0af68;font-weight:bold'>{j.model_name}</div><div style='color:#a9b1d6;margin:8px 0'>Parsing model data...</div></div>")
 
     def _remove_selected(self):
         removed=0
@@ -293,10 +341,10 @@ class MainWindow(QMainWindow):
         p=it.data(0,Qt.UserRole); j=self.jobs.get(p)
         if not j: return
         menu=QMenu(self)
-        if j.status=="ready":
-            menu.addAction("Remove").triggered.connect(lambda: self._remove_one(p))
+        if j.status=="ready": menu.addAction("Remove from queue").triggered.connect(lambda: self._remove_one(p))
         if j.status=="done" and j.output_path and os.path.exists(j.output_path):
             menu.addAction("Open output folder").triggered.connect(lambda: os.startfile(os.path.dirname(j.output_path)))
+            menu.addAction("Open report").triggered.connect(lambda: os.startfile(os.path.join(os.path.dirname(j.output_path),j.model_name+"_report.html")) if os.path.exists(os.path.join(os.path.dirname(j.output_path),j.model_name+"_report.html")) else None)
         menu.exec(self.queue_tree.viewport().mapToGlobal(pos))
 
     def _remove_one(self,p):
@@ -313,7 +361,7 @@ class MainWindow(QMainWindow):
 
     def _start(self):
         q=[j for j in self.jobs.values() if j.status=="ready"]
-        if not q: self._log("WARNING","No models ready."); return
+        if not q: self._log("WARNING","No models ready. Add models first."); return
         self.cvt_btn.setEnabled(False); self.stp_btn.setEnabled(True); self.ov_prog.setVisible(True); self.ov_prog.setMaximum(len(q)); self.ov_prog.setValue(0); self._next()
 
     def _next(self):
@@ -355,7 +403,7 @@ class MainWindow(QMainWindow):
     def _done(self):
         self.cvt_btn.setEnabled(True); self.stp_btn.setEnabled(False); self.ov_prog.setVisible(False)
         d=sum(1 for j in self.jobs.values() if j.status=="done"); f=sum(1 for j in self.jobs.values() if j.status=="failed")
-        self._log("SUCCESS",f"Done: {d} ok, {f} failed"); self.statusBar().showMessage(f"Complete: {d} ok"+(f", {f} failed" if f else ""),5000); self._save_session(); self._update_title()
+        self._log("SUCCESS",f"Done: {d} succeeded, {f} failed"); self.statusBar().showMessage(f"Complete: {d} ok"+(f", {f} failed" if f else ""),5000); self._save_session(); self._update_title()
 
     def _op(self,p,pc):
         if p in self.jobs: self.jobs[p].progress=pc; self._upd(self.jobs[p])
@@ -383,14 +431,14 @@ class MainWindow(QMainWindow):
 
     def _log(self,lv,msg):
         ts=datetime.now().strftime("%H:%M:%S")
-        f=QTextCharFormat(); f.setForeground({"ERROR":QColor("#e74c3c"),"WARNING":QColor("#f39c12"),"SUCCESS":QColor("#a6e3a1"),"INFO":QColor("#cdd6f4")}.get(lv,QColor("#a6adc8")))
+        f=QTextCharFormat(); f.setForeground({"ERROR":QColor("#f7768e"),"WARNING":QColor("#e0af68"),"SUCCESS":QColor("#9ece6a"),"INFO":QColor("#c0caf5")}.get(lv,QColor("#a9b1d6")))
         c=self.log_view.textCursor(); was_end=c.atEnd(); c.movePosition(QTextCursor.End); c.insertText(f"{ts}  {lv:<7} {msg}\n",f)
         if was_end: self.log_view.setTextCursor(c); self.log_view.ensureCursorVisible()
 
     def _upd(self,j):
         it=self._find_item(j.mdx_path)
         if it:
-            st={"ready":"Ready","checking":"Checking...","textures":"Textures","blender":"Blender","done":"Complete","failed":"Failed"}
+            st={"ready":"Ready","checking":"Checking","textures":"Textures","blender":"Blender","done":"Complete","failed":"Failed"}
             it.setText(1,st.get(j.status,j.status.title())); it.setText(2,f"{j.progress}%" if j.progress else u"\u2014")
             it.setText(3,str(len(j.warnings)) if j.warnings else u"\u2014")
 
@@ -444,11 +492,11 @@ class MainWindow(QMainWindow):
         if p: ed.setText(p)
 
     def _oneclick(self):
-        self._log("INFO","One-click setup..."); self._oc_btn.setEnabled(False); self._oc_btn.setText("Downloading Blender (~300MB)...")
+        self._log("INFO","Starting one-click setup..."); self._oc_btn.setEnabled(False); self._oc_btn.setText("Downloading Blender (~300MB)...")
         import concurrent.futures
         def _done(f):
             exe=f.result()
-            if exe: self._be.setText(str(exe)); self._bs.setText(f"Ready: {exe}"); self._log("SUCCESS","Blender + m3studio ready")
+            if exe: self._be.setText(str(exe)); self._bs.setText(f"Ready: {exe}"); self._log("SUCCESS","Blender + m3studio installed")
             else: self._bs.setText("Failed"); self._log("ERROR","Setup failed")
             self._oc_btn.setEnabled(True); self._oc_btn.setText("One-Click Setup")
         with concurrent.futures.ThreadPoolExecutor(1) as ex:

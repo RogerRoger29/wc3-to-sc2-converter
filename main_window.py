@@ -1,5 +1,5 @@
 """WC3 -> SC2 Model Converter - PySide6 GUI Application.
-Double-click EXE with premium UX, drag-drop .mdx, auto-conversion.
+Double-click EXE, drag-drop .mdx, auto-conversion.
 All features exposed as user-configurable settings.
 
 Usage: python main_window.py [model.mdx] [--silent] [--cli]
@@ -187,15 +187,22 @@ class MainWindow(QMainWindow):
 
     def _add_model_path(self,p,silent=False):
         if p in self.jobs: return
-        n=os.path.splitext(os.path.basename(p))[0]; j=ModelJob(mdx_path=p,model_name=n,scale=self._scale,particle_rate=self._prate)
-        try:
-            j.mdx_data=mdxlib.parse(p)
-            j.texture_count=len(j.mdx_data.get("textures",[]))
-            j.animation_count=len(j.mdx_data.get("sequences",[]))
-        except: pass
+        n=os.path.splitext(os.path.basename(p))[0]
+        j=ModelJob(mdx_path=p,model_name=n,scale=self._scale,particle_rate=self._prate)
         self.jobs[p]=j; self._add_item(j)
         if not silent: self._log("INFO","Added: "+n)
         self._vis(); self._save_session()
+        # Parse MDX in background to keep UI responsive
+        def _bg_parse():
+            try:
+                md=mdxlib.parse(p)
+                j.mdx_data=md
+                j.texture_count=len(md.get("textures",[]))
+                j.animation_count=len(md.get("sequences",[]))
+                self._log("INFO",f"  Parsed {n}: {j.texture_count} textures, {j.animation_count} anims")
+            except Exception as e:
+                self._log("ERROR",f"Parse failed for {n}: {e}")
+        threading.Thread(target=_bg_parse,daemon=True).start()
 
     def _add_folder_path(self,d):
         c=0
@@ -233,8 +240,13 @@ class MainWindow(QMainWindow):
         q=[j for j in self.jobs.values() if j.status=="queued"]
         if not q: self._done(); return
         j=q[0]; j.start_time=time.time(); self._log("INFO",">> "+j.model_name)
-        try: md=j.mdx_data or mdxlib.parse(j.mdx_path)
-        except Exception as e: self._log("ERROR",str(e)); j.status="failed"; self._upd(j); self._next(); return
+        # Wait for background parse if still running (short timeout)
+        waited=0
+        while j.mdx_data is None and waited<30:
+            time.sleep(0.1); waited+=0.1
+        if j.mdx_data is None:
+            self._log("ERROR","MDX parse incomplete — skipping"); j.status="failed"; self._upd(j); self._next(); return
+        md=j.mdx_data
         if self._auto_scale: s,c=discovery.estimate_scale(md); j.scale=s; self._log("INFO",f"Scale: {s} ({c})")
         od=self._od or os.path.join(os.path.dirname(j.mdx_path),"out"); os.makedirs(od,exist_ok=True)
         bc={"mdx":j.mdx_path,"out":os.path.join(od,j.model_name+".m3"),"model_name":j.model_name,"scale":j.scale,

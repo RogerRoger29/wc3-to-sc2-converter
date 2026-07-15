@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Blender
+*.blend1
+*.blend2
+
+# OS
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# Build artifacts
+_build_config.json
+*.m3
+*.dds
+out/
+Converted/
+
+# PyInstaller
+*.spec
+*.manifest
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/

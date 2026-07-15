@@ -153,6 +153,13 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Delete"),self,self._remove_selected)
         QShortcut(QKeySequence("Return"),self,self._start)
 
+    def _swap_tab(self,idx,widget,label):
+        self.tabs.blockSignals(True)
+        self.tabs.removeTab(idx)
+        self.tabs.insertTab(idx,widget,label)
+        self.tabs.blockSignals(False)
+        self.tabs.setCurrentIndex(idx)
+
     def _start_settings_cache(self):
         self._settings_loading=True
         self._sb=SettingsBuilder(self); self._sb_thread=QThread()
@@ -164,20 +171,15 @@ class MainWindow(QMainWindow):
     def _on_settings_ready(self,w):
         self._settings_widget=w; self._settings_loading=False; self._sb_thread.quit()
         if self.tabs.currentIndex()==1 and not self._settings_inserted:
-            self.tabs.widget(1).deleteLater()
-            self.tabs.insertTab(1,w,"Settings"); self.tabs.setCurrentIndex(1)
-            self._settings_inserted=True
+            self._swap_tab(1,w,"Settings"); self._settings_inserted=True
 
     def _on_tab_change(self,idx):
         if idx==1 and not self._settings_inserted:
             if self._settings_widget:
-                self.tabs.widget(1).deleteLater()
-                self.tabs.insertTab(1,self._settings_widget,"Settings"); self.tabs.setCurrentIndex(1)
-                self._settings_inserted=True
+                self._swap_tab(1,self._settings_widget,"Settings"); self._settings_inserted=True
             elif self._settings_loading:
-                self.tabs.widget(1).deleteLater()
                 lb=QLabel("<div style='color:#e0af68;font-size:16px;padding:40px;text-align:center'>Loading settings...</div>")
-                self.tabs.insertTab(1,lb,"Settings"); self.tabs.setCurrentIndex(1)
+                self._swap_tab(1,lb,"Settings")
 
     def _convert_tab(self):
         tab=QWidget(); sp=QSplitter(Qt.Horizontal)

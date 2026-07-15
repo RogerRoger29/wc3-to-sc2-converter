@@ -350,15 +350,46 @@ def sample_vec(track, t, default):
     return v0.lerp(v1, s)
 
 def sample_quat(track, t):
+    """Sample a quaternion track at time t.
+
+    Uses Shoemake squad (spherical cubic interpolation) for hermite/bezier
+    tangent tracks. Falls back to slerp for linear/none interpolation.
+    """
     if not track or not track["keys"]:
         return Quaternion((1, 0, 0, 0))
+
     keys = track["keys"]; i, j, s = _interval(keys, t)
-    def q(k):
+
+    def _to_quat(k):
         x, y, z, w = k["v"]; return Quaternion((w, x, y, z))
-    q0 = q(keys[i])
+
+    q0 = _to_quat(keys[i])
     if i == j or track["interp"] == "none":
         return q0
-    return q0.slerp(q(keys[j]), s)
+
+    q1 = _to_quat(keys[j])
+    if track["interp"] not in ("hermite", "bezier"):
+        return q0.slerp(q1, s)
+
+    # Cubic quaternion curve via squad
+    out_tan = keys[i].get("out")
+    in_tan = keys[j].get("in")
+    if out_tan is None or in_tan is None:
+        return q0.slerp(q1, s)
+
+    # Tangents are quaternion values; compute squad control quaternions
+    a = q0.copy()
+    a.rotate(_to_quat({"v": list(out_tan)}))
+    a.normalize()
+
+    b = q1.copy()
+    inv_in = [-in_tan[0], -in_tan[1], -in_tan[2], in_tan[3]]
+    b.rotate(_to_quat({"v": inv_in}))
+    b.normalize()
+
+    # squad(q0,q1,a,b,t) = slerp(slerp(q0,q1,t), slerp(a,b,t), 2t(1-t))
+    u = 2.0 * s * (1.0 - s)
+    return q0.slerp(q1, s).slerp(a.slerp(b, s), u)
 
 def node_local_matrix(node, t):
     trans = sample_vec(node["tracks"].get("translation"), t, (0, 0, 0)) * SCALE
